@@ -1,0 +1,32 @@
+import type { Metadata } from "next";
+import "./globals.css";
+
+export const metadata: Metadata = {
+  title: "MTG Deck Optimizer",
+  description: "Commander deck builder and optimizer powered by Scryfall + EDHREC",
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en" className="dark">
+      <body className="min-h-screen flex flex-col">
+        <header className="border-b border-gray-800 bg-gray-900 px-6 py-3 flex items-center gap-4">
+          <a href="/" className="flex items-center gap-2 text-yellow-400 font-bold text-lg tracking-wide">
+            <span className="text-2xl">⚔️</span>
+            <span>MTG Optimizer</span>
+          </a>
+          <span className="text-gray-500 text-sm">Commander / EDH</span>
+          <div className="ml-auto flex items-center gap-3 text-gray-500 text-xs">
+            <span>Powered by</span>
+            <a href="https://scryfall.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">Scryfall</a>
+            <span>+</span>
+            <a href="https://edhrec.com" target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:underline">EDHREC</a>
+            <span>+</span>
+            <a href="https://moxfield.com" target="_blank" rel="noopener noreferrer" className="text-green-400 hover:underline">Moxfield</a>
+          </div>
+        </header>
+        <main className="flex-1">{children}</main>
+      </body>
+    </html>
+  );
+}
