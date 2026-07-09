@@ -73,7 +73,7 @@ export default function DeckImport({ onImport }: Props) {
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder={`1 Sol Ring\n1 Command Tower\n1 Cultivate\n...\n\n(MTGO / Arena format. Put "Commander:" on its own line to mark your commander)`}
+          placeholder={`1 Sol Ring\n1 Command Tower\n...\n\n1 Commander Name\n\n(Separate your commander with a blank line — at the top or bottom — or use "Commander:" syntax)`}
           rows={8}
           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500 transition-colors font-mono resize-none"
         />

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCardByName } from "@/lib/scryfall";
+import { getCardByNameSafe as getCardByName } from "@/lib/scryfallServer";
 
 export async function GET(req: NextRequest) {
   const name = req.nextUrl.searchParams.get("name") ?? "";

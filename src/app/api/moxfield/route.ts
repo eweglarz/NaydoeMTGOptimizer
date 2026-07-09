@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchMoxfieldDeck, parseTextDeckList, extractMoxfieldId } from "@/lib/moxfield";
-import { getCardsByNames } from "@/lib/scryfall";
+import { getCardsByNamesSafe as getCardsByNames } from "@/lib/scryfallServer";
 import { ScryfallCard } from "@/types/mtg";
 
 // POST body: { url?: string; text?: string }
@@ -9,6 +9,7 @@ export async function POST(req: NextRequest) {
 
   let commanderNames: string[] = [];
   let cardNames: string[] = [];
+  let sideboardNames: string[] = [];
 
   if (body.url) {
     const id = extractMoxfieldId(body.url);
@@ -28,12 +29,13 @@ export async function POST(req: NextRequest) {
     const parsed = parseTextDeckList(body.text);
     commanderNames = parsed.commanderNames;
     cardNames = parsed.cardNames;
+    sideboardNames = parsed.sideboardNames ?? [];
   } else {
     return NextResponse.json({ error: "url or text required" }, { status: 400 });
   }
 
   // Resolve all unique names in bulk via Scryfall /cards/collection (75 per request)
-  const allUniqueNames = [...new Set([...commanderNames, ...cardNames])];
+  const allUniqueNames = [...new Set([...commanderNames, ...cardNames, ...sideboardNames])];
   const resolved = await getCardsByNames(allUniqueNames);
 
   const commanders = commanderNames
@@ -45,5 +47,9 @@ export async function POST(req: NextRequest) {
     .map((n) => resolved.get(n.toLowerCase()))
     .filter((c): c is ScryfallCard => !!c);
 
-  return NextResponse.json({ commanders, cards });
+  const sideboard = sideboardNames
+    .map((n) => resolved.get(n.toLowerCase()))
+    .filter((c): c is ScryfallCard => !!c);
+
+  return NextResponse.json({ commanders, cards, sideboard });
 }

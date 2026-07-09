@@ -95,6 +95,9 @@ export interface OptimizationSuggestion {
   budgetTier: "budget" | "mid" | "expensive";
   replaces?: ScryfallCard;
   isGameChanger?: boolean;
+  source?: "edhrec" | "scryfall";
+  /** For scryfall-sourced suggestions, the theme that matched */
+  sourceTheme?: string;
 }
 
 export interface Deck {

@@ -1,8 +1,8 @@
 import { ScryfallCard, OptimizationSuggestion, EdhrecRecommendation } from "@/types/mtg";
 import { getCardPrice, getBudgetTier } from "./scryfall";
 import { isGameChanger } from "./gamechangers";
+import { ScryfallThemeResult } from "./scryfallSynergy";
 
-const MID_THRESHOLD = 10;
 
 interface OptimizerInput {
   deckCards: ScryfallCard[];
@@ -10,6 +10,9 @@ interface OptimizerInput {
   recommendations: EdhrecRecommendation;
   resolvedEdhrecCards: ScryfallCard[];
   budgetFilter?: "all" | "budget" | "mid" | "expensive";
+  scryfallThemeResults?: ScryfallThemeResult[];
+  /** Pre-fetched CMC-based upgrade pairs: lower-CMC Scryfall alternatives per function category */
+  cmcUpgrades?: Array<{ candidate: ScryfallCard; replaces: ScryfallCard; tagKind: string }>;
 }
 
 export function generateSuggestions({
@@ -17,6 +20,8 @@ export function generateSuggestions({
   recommendations,
   resolvedEdhrecCards,
   budgetFilter = "all",
+  scryfallThemeResults = [],
+  cmcUpgrades = [],
 }: OptimizerInput): OptimizationSuggestion[] {
   const deckNames = new Set(deckCards.map((c) => c.name.toLowerCase()));
   const suggestions: OptimizationSuggestion[] = [];
@@ -25,7 +30,7 @@ export function generateSuggestions({
     recommendations.cards.map((c) => [c.name.toLowerCase(), c])
   );
 
-  // ADD suggestions: high-synergy cards not yet in deck
+  // ADD suggestions: high-synergy cards not yet in deck (EDHREC)
   for (const scryfCard of resolvedEdhrecCards) {
     if (deckNames.has(scryfCard.name.toLowerCase())) continue;
     const edrec = edhrecMap.get(scryfCard.name.toLowerCase());
@@ -53,6 +58,7 @@ export function generateSuggestions({
       inclusionRate: edrec.inclusion_rate,
       numDecks: edrec.num_decks,
       budgetTier: tier,
+      source: "edhrec",
     });
   }
 
@@ -68,6 +74,7 @@ export function generateSuggestions({
         isGameChanger: true,
         reason: "Commander Brackets Game Changer — raises your deck to bracket 4. Cut if playing in a lower-power game.",
         budgetTier: tier,
+        source: "edhrec",
       });
       continue;
     }
@@ -80,6 +87,7 @@ export function generateSuggestions({
         card,
         reason: "No EDHREC presence for this commander — consider cutting for better synergy",
         budgetTier: tier,
+        source: "edhrec",
       });
     } else if (edrec.inclusion_rate < 0.05 && (edrec.synergy_score ?? 0) < 0) {
       if (budgetFilter !== "all" && tier !== budgetFilter) continue;
@@ -91,45 +99,63 @@ export function generateSuggestions({
         inclusionRate: edrec.inclusion_rate,
         numDecks: edrec.num_decks,
         budgetTier: tier,
+        source: "edhrec",
       });
     }
   }
 
-  // UPGRADE suggestions: cards in deck with budget alternatives having higher synergy
-  for (const card of deckCards) {
-    const price = getCardPrice(card);
-    if (price === null || price < MID_THRESHOLD) continue;
-
-    const edrec = edhrecMap.get(card.name.toLowerCase());
-    const cardSynergy = edrec?.synergy_score ?? 0;
-
-    const betterBudget = resolvedEdhrecCards.find((candidate) => {
-      if (deckNames.has(candidate.name.toLowerCase())) return false;
-      const cp = getCardPrice(candidate);
-      if (cp === null || cp >= price * 0.5) return false;
-      const ce = edhrecMap.get(candidate.name.toLowerCase());
-      return ce && (ce.synergy_score ?? 0) >= cardSynergy;
+  // UPGRADE suggestions: lower-CMC Scryfall alternatives for the highest-cost (by CMC)
+  // functional card in each category (draw, removal, tutor, control, copy, ramp).
+  // Candidates are sorted by EDHREC popularity so the top result is most widely played.
+  for (const { candidate, replaces, tagKind } of cmcUpgrades) {
+    const price = getCardPrice(candidate);
+    const tier = getBudgetTier(price);
+    if (budgetFilter !== "all" && tier !== budgetFilter) continue;
+    suggestions.push({
+      type: "upgrade",
+      card: candidate,
+      reason: `CMC ${candidate.cmc} vs ${replaces.cmc} — lower-cost ${tagKind} effect replacing ${replaces.name} (top EDHREC pick in your colors)`,
+      replaces,
+      budgetTier: tier,
+      source: "scryfall",
     });
+  }
 
-    if (betterBudget) {
-      const tier = getBudgetTier(getCardPrice(betterBudget));
+  // ADD suggestions from Scryfall advanced search (theme-based, not in EDHREC)
+  const addedScryfallNames = new Set<string>();
+  for (const { theme, cards } of scryfallThemeResults) {
+    for (const card of cards) {
+      const key = card.name.toLowerCase();
+      if (deckNames.has(key)) continue;
+      if (edhrecMap.has(key)) continue; // EDHREC already covers this card
+      if (addedScryfallNames.has(key)) continue; // dedup across themes
+
+      const price = getCardPrice(card);
+      const tier = getBudgetTier(price);
       if (budgetFilter !== "all" && tier !== budgetFilter) continue;
+
+      addedScryfallNames.add(key);
       suggestions.push({
-        type: "upgrade",
-        card: betterBudget,
-        reason: `Budget upgrade for ${card.name} — similar or better synergy at a lower price`,
-        replaces: card,
+        type: "add",
+        card,
+        reason: `Scryfall: matches your deck's "${theme}" strategy`,
         budgetTier: tier,
+        source: "scryfall",
+        sourceTheme: theme,
+        isGameChanger: isGameChanger(card.name),
       });
     }
   }
 
-  // Sort: game changers first, then other adds, then cuts/upgrades
+  // Sort: game changers first → adds (EDHREC by synergy, then Scryfall) → cuts/upgrades
   return suggestions.sort((a, b) => {
     if (a.isGameChanger && !b.isGameChanger) return -1;
     if (b.isGameChanger && !a.isGameChanger) return 1;
     if (a.type === "add" && b.type !== "add") return -1;
     if (b.type === "add" && a.type !== "add") return 1;
+    // Within adds: EDHREC before Scryfall, then by synergy score
+    if (a.source === "edhrec" && b.source === "scryfall") return -1;
+    if (a.source === "scryfall" && b.source === "edhrec") return 1;
     return (b.synergyScore ?? 0) - (a.synergyScore ?? 0);
   });
 }

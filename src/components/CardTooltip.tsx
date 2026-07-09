@@ -23,7 +23,7 @@ export default function CardTooltip({ card, children, side }: Props) {
       const rect = ref.current.getBoundingClientRect();
       const spaceRight = window.innerWidth - rect.right;
       const spaceLeft = rect.left;
-      setPos(spaceRight >= 220 || spaceRight >= spaceLeft ? "right" : "left");
+      setPos(spaceRight >= 290 || spaceRight >= spaceLeft ? "right" : "left");
     }
     setShow(true);
   };
@@ -43,13 +43,13 @@ export default function CardTooltip({ card, children, side }: Props) {
         <div
           className={`absolute z-50 ${pos === "right" ? "left-full ml-2" : "right-full mr-2"} top-0 pointer-events-none`}
         >
-          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-2 w-52">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-2 w-[270px]">
             {src && (
               <Image
                 src={src}
                 alt={card.name}
-                width={200}
-                height={279}
+                width={260}
+                height={363}
                 className="rounded-lg w-full"
                 unoptimized
               />

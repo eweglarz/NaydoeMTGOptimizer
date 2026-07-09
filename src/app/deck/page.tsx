@@ -1,26 +1,66 @@
 "use client";
 
-import { useState, useCallback, useEffect, Suspense } from "react";
+import { useState, useCallback, useEffect, Suspense, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { ScryfallCard, OptimizationSuggestion } from "@/types/mtg";
 import DeckList from "@/components/DeckList";
 import CardSearch from "@/components/CardSearch";
 import SuggestionPanel from "@/components/SuggestionPanel";
+import BuyListPanel from "@/components/BuyListPanel";
 import DeckImport from "@/components/DeckImport";
 import CommanderSearch from "@/components/CommanderSearch";
-import CardImage from "@/components/CardImage";
+import AuthModal from "@/components/AuthModal";
+import { useAuth } from "@/components/AuthProvider";
 import { getCardImage } from "@/lib/scryfall";
 
-interface DeckScore {
-  score: number;
-  label: string;
-  details: string;
+interface DeckScore { score: number; label: string; details: string; }
+
+interface SavedDeck {
+  id: string;
+  name: string;
+  commanderName: string | null;
+  partnerName: string | null;
+  cardNames: string[];
+  sideboardNames: string[];
+  lookingToAdd: string[];
+  updatedAt: string;
+}
+
+async function resolveNames(names: string[]): Promise<ScryfallCard[]> {
+  if (!names.length) return [];
+  const res = await fetch("/api/cards/resolve", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ names }),
+  });
+  const { cards } = await res.json() as { cards: ScryfallCard[] };
+  return cards ?? [];
 }
 
 function DeckPageInner() {
   const searchParams = useSearchParams();
+  const { user } = useAuth();
+
   const [commander, setCommander] = useState<ScryfallCard | null>(null);
   const [partner, setPartner] = useState<ScryfallCard | null>(null);
+  const [cards, setCards] = useState<ScryfallCard[]>([]);
+  const [sideboard, setSideboard] = useState<ScryfallCard[]>([]);
+  const [lookingToAdd, setLookingToAdd] = useState<ScryfallCard[]>([]);
+  const [suggestions, setSuggestions] = useState<OptimizationSuggestion[]>([]);
+  const [deckScore, setDeckScore] = useState<DeckScore | null>(null);
+  const [optimizeLoading, setOptimizeLoading] = useState(false);
+  const [tab, setTab] = useState<"deck" | "suggestions" | "buy">("deck");
+  const [hasPartner, setHasPartner] = useState(false);
+
+  const [deckName, setDeckName] = useState("Untitled Deck");
+  const [savedDeckId, setSavedDeckId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState("");
+  const [myDecks, setMyDecks] = useState<SavedDeck[]>([]);
+  const [showDecks, setShowDecks] = useState(false);
+  const [loadingDecks, setLoadingDecks] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const decksPanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const commanderName = searchParams.get("commander");
@@ -36,35 +76,65 @@ function DeckPageInner() {
     if (!raw) return;
     sessionStorage.removeItem("pendingImport");
     try {
-      const result = JSON.parse(raw) as { commanders: ScryfallCard[]; cards: ScryfallCard[] };
+      const result = JSON.parse(raw) as { commanders: ScryfallCard[]; cards: ScryfallCard[]; sideboard?: ScryfallCard[] };
       if (result.commanders[0]) setCommander(result.commanders[0]);
       if (result.commanders[1]) { setPartner(result.commanders[1]); setHasPartner(true); }
       setCards(result.cards);
+      if (result.sideboard?.length) setSideboard(result.sideboard);
       setTab("deck");
     } catch {}
   }, []);
-  const [cards, setCards] = useState<ScryfallCard[]>([]);
-  const [suggestions, setSuggestions] = useState<OptimizationSuggestion[]>([]);
-  const [deckScore, setDeckScore] = useState<DeckScore | null>(null);
-  const [optimizeLoading, setOptimizeLoading] = useState(false);
-  const [tab, setTab] = useState<"deck" | "suggestions">("deck");
-  const [hasPartner, setHasPartner] = useState(false);
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (decksPanelRef.current && !decksPanelRef.current.contains(e.target as Node)) {
+        setShowDecks(false);
+      }
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  useEffect(() => {
+    if (!showDecks || !user) return;
+    setLoadingDecks(true);
+    fetch("/api/decks")
+      .then((r) => r.json())
+      .then(({ decks }) => setMyDecks(decks ?? []))
+      .catch(() => {})
+      .finally(() => setLoadingDecks(false));
+  }, [showDecks, user]);
 
   const addCard = useCallback((card: ScryfallCard) => {
-    setCards((prev) => {
-      if (prev.find((c) => c.id === card.id)) return prev;
-      return [...prev, card];
-    });
+    setCards((prev) => prev.find((c) => c.id === card.id) ? prev : [...prev, card]);
   }, []);
 
   const removeCard = useCallback((card: ScryfallCard) => {
     setCards((prev) => prev.filter((c) => c.id !== card.id));
   }, []);
 
-  const handleImport = ({ commanders, cards: importedCards }: { commanders: ScryfallCard[]; cards: ScryfallCard[] }) => {
-    if (commanders[0]) setCommander(commanders[0]);
+  const addToLookingToAdd = useCallback((card: ScryfallCard) => {
+    setLookingToAdd((prev) => prev.find((c) => c.id === card.id) ? prev : [...prev, card]);
+  }, []);
+
+  const removeFromLookingToAdd = useCallback((card: ScryfallCard) => {
+    setLookingToAdd((prev) => prev.filter((c) => c.id !== card.id));
+  }, []);
+
+  const moveToDeck = useCallback((card: ScryfallCard) => {
+    addCard(card);
+    removeFromLookingToAdd(card);
+  }, [addCard, removeFromLookingToAdd]);
+
+  const handleImport = ({ commanders, cards: imported, sideboard: sb }: {
+    commanders: ScryfallCard[]; cards: ScryfallCard[]; sideboard?: ScryfallCard[];
+  }) => {
+    if (commanders[0]) { setCommander(commanders[0]); setDeckName(`${commanders[0].name} Deck`); }
     if (commanders[1]) { setPartner(commanders[1]); setHasPartner(true); }
-    setCards(importedCards);
+    setCards(imported);
+    setSideboard(sb ?? []);
+    setLookingToAdd([]);
+    setSavedDeckId(null);
     setTab("deck");
   };
 
@@ -73,20 +143,13 @@ function DeckPageInner() {
     setOptimizeLoading(true);
     setSuggestions([]);
     setTab("suggestions");
-
     try {
       const res = await fetch("/api/optimize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          commanderName: commander.name,
-          deckCardNames: cards.map((c) => c.name),
-        }),
+        body: JSON.stringify({ commanderName: commander.name, deckCardNames: cards.map((c) => c.name) }),
       });
-      const data = await res.json() as {
-        suggestions: OptimizationSuggestion[];
-        deckScore: DeckScore;
-      };
+      const data = await res.json() as { suggestions: OptimizationSuggestion[]; deckScore: DeckScore };
       setSuggestions(data.suggestions ?? []);
       setDeckScore(data.deckScore ?? null);
     } finally {
@@ -94,14 +157,73 @@ function DeckPageInner() {
     }
   };
 
+  const saveDeck = async () => {
+    if (!user) { setShowAuthModal(true); return; }
+    setSaving(true);
+    setSaveMsg("");
+    try {
+      const body = {
+        name: deckName,
+        commanderName: commander?.name ?? null,
+        partnerName: partner?.name ?? null,
+        cardNames: cards.map((c) => c.name),
+        sideboardNames: sideboard.map((c) => c.name),
+        lookingToAdd: lookingToAdd.map((c) => c.name),
+      };
+      if (savedDeckId) {
+        await fetch(`/api/decks/${savedDeckId}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        });
+      } else {
+        const res = await fetch("/api/decks", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        });
+        const { deck } = await res.json() as { deck: SavedDeck };
+        setSavedDeckId(deck.id);
+      }
+      setSaveMsg("Saved!");
+      setTimeout(() => setSaveMsg(""), 2500);
+    } catch {
+      setSaveMsg("Save failed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const loadDeck = async (deck: SavedDeck) => {
+    setShowDecks(false);
+    const allNames = [
+      ...(deck.commanderName ? [deck.commanderName] : []),
+      ...(deck.partnerName ? [deck.partnerName] : []),
+      ...deck.cardNames, ...deck.sideboardNames, ...deck.lookingToAdd,
+    ];
+    const resolved = await resolveNames(allNames);
+    const byName = new Map(resolved.map((c) => [c.name.toLowerCase(), c]));
+    setCommander(deck.commanderName ? (byName.get(deck.commanderName.toLowerCase()) ?? null) : null);
+    setPartner(deck.partnerName ? (byName.get(deck.partnerName.toLowerCase()) ?? null) : null);
+    setHasPartner(!!deck.partnerName);
+    setCards(deck.cardNames.map((n) => byName.get(n.toLowerCase())).filter((c): c is ScryfallCard => !!c));
+    setSideboard(deck.sideboardNames.map((n) => byName.get(n.toLowerCase())).filter((c): c is ScryfallCard => !!c));
+    setLookingToAdd(deck.lookingToAdd.map((n) => byName.get(n.toLowerCase())).filter((c): c is ScryfallCard => !!c));
+    setDeckName(deck.name);
+    setSavedDeckId(deck.id);
+    setSuggestions([]);
+    setDeckScore(null);
+    setTab("deck");
+  };
+
+  const deleteSavedDeck = async (id: string) => {
+    await fetch(`/api/decks/${id}`, { method: "DELETE" });
+    setMyDecks((prev) => prev.filter((d) => d.id !== id));
+    if (savedDeckId === id) setSavedDeckId(null);
+  };
+
   const commanderArt = commander ? getCardImage(commander, "art_crop") : null;
   const totalCards = cards.length + (commander ? 1 : 0) + (partner ? 1 : 0);
 
   return (
-    <div className="flex h-[calc(100vh-57px)]" >
-      {/* Left sidebar */}
+    <div className="flex h-[calc(100vh-57px)]">
       <aside className="w-72 border-r border-gray-800 bg-gray-900 flex flex-col overflow-hidden">
-        {/* Commander art header */}
         {commanderArt ? (
           <div className="relative h-32 flex-shrink-0">
             <img src={commanderArt} alt={commander?.name} className="w-full h-full object-cover" />
@@ -117,69 +239,111 @@ function DeckPageInner() {
           </div>
         )}
 
-        {/* Commander setup */}
         <div className="p-3 border-b border-gray-800 space-y-2 flex-shrink-0">
-          <CommanderSearch
-            onSelect={setCommander}
-            label="Commander"
-            placeholder="Search commanders..."
-          />
-          <button
-            onClick={() => setHasPartner((v) => !v)}
-            className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
-          >
+          <CommanderSearch onSelect={setCommander} label="Commander" placeholder="Search commanders..." />
+          <button onClick={() => setHasPartner((v) => !v)} className="text-xs text-gray-500 hover:text-gray-300 transition-colors">
             {hasPartner ? "− Remove partner" : "+ Add partner commander"}
           </button>
-          {hasPartner && (
-            <CommanderSearch
-              onSelect={setPartner}
-              label="Partner"
-              placeholder="Search partner..."
-            />
-          )}
+          {hasPartner && <CommanderSearch onSelect={setPartner} label="Partner" placeholder="Search partner..." />}
         </div>
 
-        {/* Card search */}
         <div className="p-3 border-b border-gray-800 flex-shrink-0">
           <CardSearch onAdd={addCard} />
         </div>
 
-        {/* Import */}
         <div className="p-3 border-b border-gray-800 flex-shrink-0">
           <DeckImport onImport={handleImport} />
         </div>
 
-        {/* Optimize button */}
         <div className="p-3 flex-shrink-0">
-          <button
-            onClick={runOptimizer}
-            disabled={!commander || optimizeLoading}
-            className="btn-primary w-full"
-          >
+          <button onClick={runOptimizer} disabled={!commander || optimizeLoading} className="btn-primary w-full">
             {optimizeLoading ? (
               <span className="flex items-center justify-center gap-2">
                 <span className="w-4 h-4 border-2 border-gray-900 border-t-transparent rounded-full animate-spin" />
                 Optimizing...
               </span>
-            ) : (
-              "✨ Optimize Deck"
-            )}
+            ) : "✨ Optimize Deck"}
           </button>
-          {!commander && (
-            <p className="text-xs text-gray-600 text-center mt-1">Select a commander first</p>
+          {!commander && <p className="text-xs text-gray-600 text-center mt-1">Select a commander first</p>}
+        </div>
+
+        {/* Save / My Decks */}
+        <div className="p-3 border-t border-gray-800 space-y-2 mt-auto flex-shrink-0">
+          <input
+            type="text"
+            value={deckName}
+            onChange={(e) => setDeckName(e.target.value)}
+            placeholder="Deck name..."
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-yellow-500 transition-colors"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={saveDeck}
+              disabled={saving}
+              className="flex-1 text-sm bg-yellow-600 hover:bg-yellow-500 disabled:opacity-50 text-white font-medium py-1.5 rounded-lg transition-colors"
+            >
+              {saving ? "Saving..." : savedDeckId ? "💾 Update" : "💾 Save Deck"}
+            </button>
+            <div ref={decksPanelRef} className="relative">
+              <button
+                onClick={() => { if (!user) { setShowAuthModal(true); return; } setShowDecks((v) => !v); }}
+                className="text-sm bg-gray-700 hover:bg-gray-600 text-gray-300 font-medium py-1.5 px-3 rounded-lg transition-colors"
+              >
+                📂
+              </button>
+              {showDecks && user && (
+                <div className="absolute bottom-full mb-2 right-0 w-72 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 p-2 max-h-80 overflow-y-auto">
+                  <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-2 py-1 mb-1">My Saved Decks</div>
+                  {loadingDecks ? (
+                    <div className="flex items-center gap-2 px-2 py-3 text-xs text-gray-500">
+                      <span className="w-3 h-3 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
+                      Loading...
+                    </div>
+                  ) : myDecks.length === 0 ? (
+                    <p className="text-xs text-gray-500 px-2 py-3">No saved decks yet.</p>
+                  ) : (
+                    <div className="space-y-0.5">
+                      {myDecks.map((d) => (
+                        <div key={d.id} className="flex items-center gap-1 p-1.5 rounded-lg hover:bg-gray-800 group transition-colors">
+                          <button onClick={() => loadDeck(d)} className="flex-1 text-left min-w-0">
+                            <div className={`text-sm truncate ${d.id === savedDeckId ? "text-yellow-400" : "text-white"}`}>{d.name}</div>
+                            <div className="text-xs text-gray-500 truncate">{d.commanderName ?? "No commander"} · {d.cardNames.length} cards</div>
+                          </button>
+                          <button
+                            onClick={() => deleteSavedDeck(d.id)}
+                            className="text-gray-600 hover:text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 px-1"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          {saveMsg && (
+            <p className={`text-xs text-center ${saveMsg === "Saved!" ? "text-green-400" : "text-red-400"}`}>{saveMsg}</p>
+          )}
+          {!user && (
+            <p className="text-xs text-gray-600 text-center">
+              <button onClick={() => setShowAuthModal(true)} className="text-yellow-500 hover:underline">Sign in</button> to save decks
+            </p>
           )}
         </div>
       </aside>
 
-      {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Tabs */}
         <div className="flex border-b border-gray-800 bg-gray-900 px-4 flex-shrink-0">
           <button
             onClick={() => setTab("deck")}
             className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${tab === "deck" ? "border-yellow-500 text-yellow-400" : "border-transparent text-gray-400 hover:text-white"}`}
           >
             Deck ({totalCards}/100)
+            {lookingToAdd.length > 0 && (
+              <span className="ml-1.5 text-xs bg-purple-900 text-purple-300 px-1.5 py-0.5 rounded-full">★ {lookingToAdd.length}</span>
+            )}
           </button>
           <button
             onClick={() => setTab("suggestions")}
@@ -187,18 +351,58 @@ function DeckPageInner() {
           >
             Suggestions {suggestions.length > 0 && <span className="ml-1 bg-purple-500 text-white text-xs px-1.5 py-0.5 rounded-full">{suggestions.length}</span>}
           </button>
+          <button
+            onClick={() => setTab("buy")}
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${tab === "buy" ? "border-emerald-500 text-emerald-400" : "border-transparent text-gray-400 hover:text-white"}`}
+          >
+            Buy Cards
+          </button>
         </div>
 
-        {/* Tab content */}
         <div className="flex-1 overflow-y-auto p-4">
           {tab === "deck" && (
-            <div className="max-w-sm">
+            <>
               <DeckList
                 cards={cards}
                 commander={commander}
+                partner={partner}
                 onRemove={removeCard}
+                onAdd={addCard}
+                lookingToAdd={lookingToAdd}
+                onRemoveFromLookingToAdd={removeFromLookingToAdd}
+                onMoveToDeck={moveToDeck}
               />
-            </div>
+              {sideboard.length > 0 && (
+                <div className="mt-4 card-panel border border-gray-700/50">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                      Sideboard <span className="text-gray-600 font-normal normal-case">({sideboard.length})</span>
+                    </span>
+                    <button onClick={() => setSideboard([])} className="text-xs text-gray-600 hover:text-red-400 transition-colors">Clear</button>
+                  </div>
+                  <div className="space-y-0.5">
+                    {sideboard.map((card, i) => (
+                      <div key={`${card.id}-${i}`} className="flex items-center gap-2 py-1 px-1 rounded hover:bg-gray-800 group transition-colors">
+                        <span className="text-sm flex-1 truncate text-gray-400">{card.name}</span>
+                        <button
+                          title="Move to deck"
+                          onClick={() => { addCard(card); setSideboard((prev) => prev.filter((_, idx) => idx !== i)); }}
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 hover:bg-green-700 text-gray-300 hover:text-white transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0"
+                        >
+                          → Deck
+                        </button>
+                        <button
+                          onClick={() => setSideboard((prev) => prev.filter((_, idx) => idx !== i))}
+                          className="text-gray-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0 text-xs"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
           {tab === "suggestions" && (
             <SuggestionPanel
@@ -206,31 +410,20 @@ function DeckPageInner() {
               deckScore={deckScore}
               onAddCard={addCard}
               onRemoveCard={removeCard}
+              onAddToLookingToAdd={addToLookingToAdd}
               loading={optimizeLoading}
               commanderName={commander?.name ?? ""}
             />
           )}
+          {tab === "buy" && (
+            <div className="max-w-sm">
+              <BuyListPanel cards={cards} commander={commander} />
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Right panel — commander card preview */}
-      {commander && (
-        <aside className="w-52 border-l border-gray-800 bg-gray-900 p-3 flex flex-col gap-3 flex-shrink-0">
-          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Preview</div>
-          <CardImage card={commander} size="normal" width={180} height={251} className="w-full" />
-          {partner && (
-            <CardImage card={partner} size="normal" width={180} height={251} className="w-full" />
-          )}
-          <a
-            href={commander.scryfall_uri}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-blue-400 hover:underline text-center"
-          >
-            View on Scryfall ↗
-          </a>
-        </aside>
-      )}
+      {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
     </div>
   );
 }

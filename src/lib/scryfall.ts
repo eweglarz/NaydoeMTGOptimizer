@@ -90,7 +90,11 @@ export async function getCardsByNames(names: string[]): Promise<Map<string, Scry
         not_found?: Array<{ name?: string }>;
       };
       for (const card of data.data) {
-        resolved.set(card.name.toLowerCase(), card);
+        const canonical = card.name.toLowerCase();
+        resolved.set(canonical, card);
+        // For DFCs (e.g. "Needleverge Pathway // Pillarverge Pathway"), also index by front face
+        const frontFace = canonical.split(" // ")[0].trim();
+        if (frontFace !== canonical) resolved.set(frontFace, card);
       }
       // Queue anything the bulk endpoint couldn't find for individual fuzzy lookup
       for (const nf of data.not_found ?? []) {
@@ -101,10 +105,19 @@ export async function getCardsByNames(names: string[]): Promise<Map<string, Scry
     }
   }
 
-  // Fuzzy fallback for not_found cards
+  // Fuzzy fallback for not_found cards.
+  // Store under BOTH canonical name and the original queried name so that a
+  // near-miss (e.g. Scryfall returns a slightly different canonical title) is
+  // still retrievable when the caller looks up by the original queried name.
   for (const name of fuzzyQueue) {
     const card = await getCardByName(name);
-    if (card) resolved.set(card.name.toLowerCase(), card);
+    if (card) {
+      const canonical = card.name.toLowerCase();
+      resolved.set(canonical, card);
+      if (name !== canonical) resolved.set(name, card);
+      const frontFace = canonical.split(" // ")[0].trim();
+      if (frontFace !== canonical) resolved.set(frontFace, card);
+    }
   }
 
   // Also store under original queried names so callers don't need to normalize
@@ -149,10 +162,19 @@ export function getBudgetTier(price: number | null): "budget" | "mid" | "expensi
 
 export type CardTag =
   | { label: string; kind: "keyword" }
+  | { label: string; kind: "tribe" }
   | { label: "Destruction"; kind: "removal" }
   | { label: "Board Wipe"; kind: "removal" }
   | { label: "Utility"; kind: "utility" }
-  | { label: "Card Draw"; kind: "draw" };
+  | { label: "Card Draw"; kind: "draw" }
+  | { label: "Life Gain"; kind: "lifegain" }
+  | { label: "Burn"; kind: "burn" }
+  | { label: "Tutor"; kind: "tutor" }
+  | { label: "Control"; kind: "control" }
+  | { label: "Counters"; kind: "counters" }
+  | { label: string; kind: "named-counter" }
+  | { label: "Copy"; kind: "copy" }
+  | { label: "Discard"; kind: "discard" };
 
 export function getCardTags(card: ScryfallCard): CardTag[] {
   const tags: CardTag[] = [];
@@ -186,9 +208,112 @@ export function getCardTags(card: ScryfallCard): CardTag[] {
     tags.push({ label: "Utility", kind: "utility" });
   }
 
-  // Card draw
-  if (/\bdraw (a card|two cards|three cards|x cards|\d+ cards|cards equal)\b/i.test(oracle)) {
+  // Card draw — if the card has any cycling keyword, strip parenthetical reminder text
+  // first so the cycling clause ("Discard this card: Draw a card.") doesn't generate
+  // a redundant Card Draw tag. Only tag as Card Draw when draw exists outside cycling.
+  const hasCyclingKw = (card.keywords ?? []).some((k) => /cycling/i.test(k));
+  const oracleNoParen = hasCyclingKw ? oracle.replace(/\([^)]*\)/g, "") : oracle;
+  if (/\bdraw (a card|two cards|three cards|x cards|\d+ cards|cards equal)\b/i.test(oracleNoParen)) {
     tags.push({ label: "Card Draw", kind: "draw" });
+  }
+
+  // Life Gain: nonland cards that cause life to be gained
+  if (!isLand && /\bgains? .{0,25}life\b/i.test(oracle)) {
+    tags.push({ label: "Life Gain", kind: "lifegain" });
+  }
+
+  // Burn: deals damage or causes life loss directed at opponents/players
+  if (
+    !isLand &&
+    (
+      /\b(target opponent|each opponent)\b.{0,50}\bloses? \S+ life\b/i.test(oracle) ||
+      /\bdeal(s)? .{0,20}\bdamage to (target (opponent|player|player or planeswalker)|each (opponent|player)|any target)\b/i.test(oracle)
+    )
+  ) {
+    tags.push({ label: "Burn", kind: "burn" });
+  }
+
+  // Tutor: searches library for a nonland card.
+  // Exclude pure land-fetches (fetch lands, ramp spells) by checking that the
+  // search target isn't a basic land type or generic "land card".
+  if (
+    /search your library for/i.test(oracle) &&
+    !/search your library for (a |an |up to \w+ )?(basic )?(land|plains|island|swamp|mountain|forest)\b/i.test(oracle)
+  ) {
+    tags.push({ label: "Tutor", kind: "tutor" });
+  }
+
+  // Control: counterspells, stax, ability restrictions, and tax effects.
+  // "counter target \w* spell/instant/sorcery" handles qualified targets like
+  // "counter target blue spell" or "counter target instant or sorcery spell".
+  if (
+    /counter target \w* ?(spell|instant|sorcery)/i.test(oracle) ||
+    /\bcan't cast\b/i.test(oracle) ||
+    /\bcan't activate abilities\b/i.test(oracle) ||
+    /abilities.*can't be activated/i.test(oracle) ||
+    /unless (its controller|that player|they) pays/i.test(oracle)
+  ) {
+    tags.push({ label: "Control", kind: "control" });
+  }
+
+  // Counters: placing +1/+1 or -1/-1 counters on permanents (generic counter effects)
+  if (
+    /put .{0,20} counters? (on|onto)\b/i.test(oracle) ||
+    /\+\d+\/\+\d+ counters?/i.test(oracle) ||
+    /-\d+\/-\d+ counters?/i.test(oracle)
+  ) {
+    tags.push({ label: "Counters", kind: "counters" });
+  }
+
+  // Named special counter types — each shown as its own tag
+  const NAMED_COUNTER_TYPES = [
+    "experience", "poison", "energy", "oil", "charge", "spore", "lore",
+    "age", "time", "fate", "ice", "level", "flood", "bounty", "acorn",
+    "ki", "feather", "fade", "rust", "study", "verse", "depletion",
+    "blood", "shield", "quest", "infection", "plague",
+  ] as const;
+  for (const ctype of NAMED_COUNTER_TYPES) {
+    if (new RegExp(`\\b${ctype} counters?\\b`, "i").test(oracle)) {
+      tags.push({ label: ctype.charAt(0).toUpperCase() + ctype.slice(1), kind: "named-counter" });
+    }
+  }
+
+  // Copy: copying spells, permanents, or abilities.
+  if (
+    /\bcop(y|ies) (target|of|the|that|each|it)\b/i.test(oracle) ||
+    /\bcreate .{0,30} cop(y|ies)\b/i.test(oracle) ||
+    /\bput .{0,20} cop(y|ies)\b/i.test(oracle)
+  ) {
+    tags.push({ label: "Copy", kind: "copy" });
+  }
+
+  // Discard: nonland cards that force a player to discard.
+  // Catches: targeted/mass discard, "discard your hand", and loot/wheel effects
+  // where draw and discard appear together (e.g. "Draw two cards, then discard two").
+  // Excludes optional "you may discard" and plain activated costs ("discard a card:").
+  // Uses oracleNoParen so cycling reminder "(Discard this card: Draw a card.)" doesn't
+  // falsely trigger the draw+discard co-occurrence pattern.
+  if (
+    !isLand &&
+    (
+      /\b(target player|each player|target opponent|each opponent|that player|players)\b.{0,50}\bdiscards?\b/i.test(oracleNoParen) ||
+      /\bdiscards? (your hand|all cards in (your|their) hand)\b/i.test(oracleNoParen) ||
+      /\b(draw .{0,40} discard|discard .{0,40} draw)\b/i.test(oracleNoParen)
+    )
+  ) {
+    tags.push({ label: "Discard", kind: "discard" });
+  }
+
+  // Creature subtypes — always pushed last so they appear at the end of the tag row.
+  const primaryTypeLine = card.card_faces?.[0]?.type_line ?? card.type_line;
+  if (primaryTypeLine.includes("Creature")) {
+    const dashIdx = primaryTypeLine.indexOf("—");
+    if (dashIdx !== -1) {
+      const subtypePart = primaryTypeLine.slice(dashIdx + 1).trim();
+      for (const subtype of subtypePart.split(/\s+/).filter(Boolean)) {
+        tags.push({ label: subtype, kind: "tribe" });
+      }
+    }
   }
 
   return tags;

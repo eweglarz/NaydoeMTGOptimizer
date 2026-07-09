@@ -17,6 +17,7 @@ interface Props {
   deckScore: DeckScore | null;
   onAddCard: (card: ScryfallCard) => void;
   onRemoveCard: (card: ScryfallCard) => void;
+  onAddToLookingToAdd?: (card: ScryfallCard) => void;
   loading: boolean;
   commanderName: string;
 }
@@ -31,6 +32,7 @@ const BUDGET_LABELS: Record<BudgetTier, string> = {
 
 type SuggestionType = "all" | "add" | "cut" | "upgrade";
 type CardTypeFilter = "all" | "Creatures" | "Instants" | "Sorceries" | "Enchantments" | "Artifacts" | "Planeswalkers" | "Lands";
+type SourceFilter = "all" | "edhrec" | "scryfall";
 
 const CARD_TYPE_KEYWORDS: Record<Exclude<CardTypeFilter, "all">, string> = {
   Creatures: "Creature",
@@ -42,15 +44,18 @@ const CARD_TYPE_KEYWORDS: Record<Exclude<CardTypeFilter, "all">, string> = {
   Lands: "Land",
 };
 
-export default function SuggestionPanel({ suggestions, deckScore, onAddCard, onRemoveCard, loading, commanderName }: Props) {
+export default function SuggestionPanel({ suggestions, deckScore, onAddCard, onRemoveCard, onAddToLookingToAdd, loading, commanderName }: Props) {
   const [budgetFilter, setBudgetFilter] = useState<BudgetTier>("all");
   const [typeFilter, setTypeFilter] = useState<SuggestionType>("all");
   const [cardTypeFilter, setCardTypeFilter] = useState<CardTypeFilter>("all");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
 
   const filtered = suggestions.filter((s) => {
     if (typeFilter !== "all" && s.type !== typeFilter) return false;
     if (budgetFilter !== "all" && s.budgetTier !== budgetFilter) return false;
     if (cardTypeFilter !== "all" && !s.card.type_line.includes(CARD_TYPE_KEYWORDS[cardTypeFilter])) return false;
+    if (sourceFilter === "edhrec" && s.source !== "edhrec") return false;
+    if (sourceFilter === "scryfall" && s.source !== "scryfall") return false;
     return true;
   });
 
@@ -58,6 +63,8 @@ export default function SuggestionPanel({ suggestions, deckScore, onAddCard, onR
   const gameChangersToAdd = suggestions.filter((s) => s.type === "add" && s.isGameChanger);
   // Game changers already IN the deck (bracket warnings)
   const gameChangersInDeck = suggestions.filter((s) => s.type === "cut" && s.isGameChanger);
+
+  const scryfallCount = suggestions.filter((s) => s.source === "scryfall").length;
 
   return (
     <div className="space-y-4">
@@ -92,7 +99,7 @@ export default function SuggestionPanel({ suggestions, deckScore, onAddCard, onR
           </p>
           <div className="space-y-1">
             {gameChangersInDeck.map((s) => (
-              <SuggestionRow key={s.card.id} suggestion={s} onAdd={onAddCard} onCut={onRemoveCard} />
+              <SuggestionRow key={s.card.id} suggestion={s} onAdd={onAddCard} onCut={onRemoveCard} onSaveLater={onAddToLookingToAdd} />
             ))}
           </div>
         </div>
@@ -108,7 +115,7 @@ export default function SuggestionPanel({ suggestions, deckScore, onAddCard, onR
           </p>
           <div className="space-y-1">
             {gameChangersToAdd.map((s) => (
-              <SuggestionRow key={s.card.id} suggestion={s} onAdd={onAddCard} onCut={onRemoveCard} />
+              <SuggestionRow key={s.card.id} suggestion={s} onAdd={onAddCard} onCut={onRemoveCard} onSaveLater={onAddToLookingToAdd} />
             ))}
           </div>
         </div>
@@ -120,6 +127,7 @@ export default function SuggestionPanel({ suggestions, deckScore, onAddCard, onR
           <span className="text-xs text-gray-500">{filtered.length} suggestions</span>
         </div>
 
+        {/* Type filter */}
         <div className="flex flex-wrap gap-1.5">
           {(["all", "add", "cut", "upgrade"] as SuggestionType[]).map((t) => (
             <button
@@ -133,6 +141,7 @@ export default function SuggestionPanel({ suggestions, deckScore, onAddCard, onR
           ))}
         </div>
 
+        {/* Budget filter */}
         <div className="flex flex-wrap gap-1.5">
           {(["all", "budget", "mid", "expensive"] as BudgetTier[]).map((tier) => (
             <button
@@ -145,6 +154,7 @@ export default function SuggestionPanel({ suggestions, deckScore, onAddCard, onR
           ))}
         </div>
 
+        {/* Card type filter */}
         <div className="flex flex-wrap gap-1.5">
           {(["all", "Creatures", "Instants", "Sorceries", "Enchantments", "Artifacts", "Planeswalkers", "Lands"] as CardTypeFilter[]).map((ct) => (
             <button
@@ -153,6 +163,32 @@ export default function SuggestionPanel({ suggestions, deckScore, onAddCard, onR
               className={`text-xs px-2.5 py-1 rounded-full transition-colors ${cardTypeFilter === ct ? "bg-indigo-700 text-white" : "bg-gray-800 text-gray-400 hover:text-white"}`}
             >
               {ct === "all" ? "All Types" : ct}
+            </button>
+          ))}
+        </div>
+
+        {/* Source filter */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-gray-500 mr-0.5">Source</span>
+          {([
+            { id: "all" as SourceFilter, label: "All" },
+            { id: "edhrec" as SourceFilter, label: "EDHREC" },
+            { id: "scryfall" as SourceFilter, label: `Scryfall${scryfallCount > 0 ? ` (${scryfallCount})` : ""}` },
+          ]).map(({ id, label }) => (
+            <button
+              key={id}
+              onClick={() => setSourceFilter(id)}
+              className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
+                sourceFilter === id
+                  ? id === "scryfall"
+                    ? "bg-cyan-800 text-cyan-100"
+                    : id === "edhrec"
+                    ? "bg-purple-800 text-purple-100"
+                    : "bg-gray-600 text-white"
+                  : "bg-gray-800 text-gray-400 hover:text-white"
+              }`}
+            >
+              {label}
             </button>
           ))}
         </div>
@@ -171,7 +207,7 @@ export default function SuggestionPanel({ suggestions, deckScore, onAddCard, onR
         ) : (
           <div className="space-y-1 max-h-96 overflow-y-auto pr-1">
             {filtered.map((s, i) => (
-              <SuggestionRow key={`${s.card.id}-${i}`} suggestion={s} onAdd={onAddCard} onCut={onRemoveCard} />
+              <SuggestionRow key={`${s.card.id}-${i}`} suggestion={s} onAdd={onAddCard} onCut={onRemoveCard} onSaveLater={onAddToLookingToAdd} />
             ))}
           </div>
         )}
@@ -184,10 +220,12 @@ function SuggestionRow({
   suggestion: s,
   onAdd,
   onCut,
+  onSaveLater,
 }: {
   suggestion: OptimizationSuggestion;
   onAdd: (c: ScryfallCard) => void;
   onCut: (c: ScryfallCard) => void;
+  onSaveLater?: (c: ScryfallCard) => void;
 }) {
   const price = getCardPrice(s.card);
 
@@ -222,17 +260,38 @@ function SuggestionRow({
                   : ""}
               </span>
             )}
+            {/* Source badge */}
+            {s.source === "scryfall" ? (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800/50 leading-none">
+                Scryfall · {s.sourceTheme}
+              </span>
+            ) : s.source === "edhrec" ? (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-950 text-purple-400 border border-purple-800/50 leading-none">
+                EDHREC
+              </span>
+            ) : null}
           </div>
           <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">{s.reason}</p>
         </div>
         <div className="flex gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
           {(s.type === "add" || s.type === "upgrade") && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onAdd(s.card); }}
-              className="text-xs bg-green-700 hover:bg-green-600 text-white px-2 py-0.5 rounded transition-colors"
-            >
-              Add
-            </button>
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); onAdd(s.card); }}
+                className="text-xs bg-green-700 hover:bg-green-600 text-white px-2 py-0.5 rounded transition-colors"
+              >
+                Add
+              </button>
+              {onSaveLater && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onSaveLater(s.card); }}
+                  title="Add to Looking to Add"
+                  className="text-xs bg-purple-900 hover:bg-purple-700 text-purple-300 px-2 py-0.5 rounded transition-colors"
+                >
+                  ★ Later
+                </button>
+              )}
+            </>
           )}
           {(s.type === "cut" || s.type === "upgrade") && s.replaces && (
             <button

@@ -27,6 +27,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Local card database (large, regeneratable via npm run sync-cards)
+data/cards.db
+data/cards_tmp.json
+
 # OS
 .DS_Store
 Thumbs.db
