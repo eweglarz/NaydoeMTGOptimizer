@@ -61,9 +61,11 @@ function hasOracleTags() {
   if (!existsSync(DB_PATH)) return false;
   try {
     const db = new Database(DB_PATH, { readonly: true });
-    const row = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='oracle_tag_index'").get();
+    const tableExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='oracle_tag_index'").get();
+    if (!tableExists) { db.close(); return false; }
+    const { n } = db.prepare("SELECT COUNT(*) as n FROM oracle_tag_index").get();
     db.close();
-    return Boolean(row);
+    return n > 0;
   } catch {
     return false;
   }
