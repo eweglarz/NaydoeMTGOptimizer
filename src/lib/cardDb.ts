@@ -5,11 +5,9 @@ import { ScryfallCard } from "@/types/mtg";
 const DB_PATH = path.join(process.cwd(), "data", "cards.db");
 
 let _db: DatabaseType | null = null;
-let _attempted = false;
 
 function getDb(): DatabaseType | null {
-  if (_attempted) return _db;
-  _attempted = true;
+  if (_db) return _db;
   try {
     const fs = require("fs") as typeof import("fs");
     if (!fs.existsSync(DB_PATH)) return null;
