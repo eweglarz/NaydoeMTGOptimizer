@@ -1,9 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import fs from "fs";
 import zlib from "zlib";
 import readline from "readline";
 import { getOracleTagStats } from "@/lib/oracleTagDb";
+import { requireAdminKey } from "@/lib/adminAuth";
 
 const CARDS_DB_PATH = path.join(process.cwd(), "data", "cards.db");
 
@@ -69,7 +70,9 @@ function parseJsonlGz(filePath: string): Promise<TagEntry[]> {
   });
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authError = requireAdminKey(request);
+  if (authError) return authError;
   if (!fs.existsSync(CARDS_DB_PATH)) {
     return NextResponse.json({ synced: false, error: "cards.db not found — sync cards first" });
   }
@@ -78,7 +81,9 @@ export async function GET() {
   return NextResponse.json({ synced: true, ...stats });
 }
 
-export async function POST() {
+export async function POST(request: NextRequest) {
+  const authError = requireAdminKey(request);
+  if (authError) return authError;
   if (!fs.existsSync(CARDS_DB_PATH)) {
     return NextResponse.json(
       { success: false, error: "cards.db not found — run /api/admin/sync-cards first" },

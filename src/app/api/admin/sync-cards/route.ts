@@ -1,8 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import fs from "fs";
 import readline from "readline";
 import { getDbStatus } from "@/lib/cardDb";
+import { requireAdminKey } from "@/lib/adminAuth";
 
 const DB_PATH = path.join(process.cwd(), "data", "cards.db");
 const SCRYFALL_UA = "NaydoeMTGOptimizer/1.0 (contact: elias666wegs@gmail.com)";
@@ -42,14 +43,18 @@ function parseOracleCardsJsonl(filePath: string): Promise<Array<Record<string, u
 }
 
 /** GET /api/admin/sync-cards — return current DB status */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authError = requireAdminKey(request);
+  if (authError) return authError;
   const status = getDbStatus();
   if (!status) return NextResponse.json({ synced: false, cardCount: 0, lastSync: null });
   return NextResponse.json({ synced: true, ...status });
 }
 
 /** POST /api/admin/sync-cards — import oracle-cards from ScryfallBulk/ or download from Scryfall */
-export async function POST() {
+export async function POST(request: NextRequest) {
+  const authError = requireAdminKey(request);
+  if (authError) return authError;
   try {
     fs.mkdirSync(path.join(process.cwd(), "data"), { recursive: true });
 
