@@ -48,12 +48,10 @@ export async function getCommanderTaggerTags(commander: ScryfallCard): Promise<T
       headers: { ...commonHeaders, Accept: "text/html,application/xhtml+xml" },
       cache: "no-store",
     });
-    console.log("[tagger] GET", cardUrl, "→", getRes.status);
     if (!getRes.ok) return [];
 
     const html = await getRes.text();
     const csrf = html.match(/<meta name="csrf-token" content="([^"]+)"/)?.[1];
-    console.log("[tagger] CSRF token found:", Boolean(csrf));
     if (!csrf) return [];
 
     // Extract session cookie — try getSetCookie() (Node 18.14+) then fall back to get()
@@ -64,7 +62,6 @@ export async function getCommanderTaggerTags(commander: ScryfallCard): Promise<T
         : (getRes.headers.get("set-cookie") ?? "");
     const sessionValue = rawSetCookie.match(/_scryfall_tagger_session=([^;,\s]+)/)?.[1];
     const cookieHeader = sessionValue ? `_scryfall_tagger_session=${sessionValue}` : "";
-    console.log("[tagger] Session cookie found:", Boolean(sessionValue));
 
     // Step 2: POST GraphQL with CSRF token + session cookie
     const postRes = await fetch("https://tagger.scryfall.com/graphql", {
@@ -86,10 +83,7 @@ export async function getCommanderTaggerTags(commander: ScryfallCard): Promise<T
       cache: "no-store",
     });
 
-    console.log("[tagger] POST graphql →", postRes.status);
     if (!postRes.ok) {
-      const errText = await postRes.text().catch(() => "");
-      console.log("[tagger] POST error body:", errText.slice(0, 200));
       return [];
     }
 
@@ -106,7 +100,6 @@ export async function getCommanderTaggerTags(commander: ScryfallCard): Promise<T
         isPrimary: (t.type ?? "").toLowerCase() === "oracle",
       }));
 
-    console.log("[tagger] Card tags found:", tags.map((t) => t.slug));
     return tags;
   } catch (err) {
     console.error("[tagger] Error:", err);
@@ -138,7 +131,6 @@ export function getTaggerTagSuggestions(
   const results: TaggerTagResult[] = [];
   for (const tag of tags.slice(0, 8)) {
     const cards = getLocalCardsByTag(tag.slug, ciStr, deckNames, 20);
-    console.log(`[tagger] local: ${tag.slug} → ${cards.length} cards`);
     if (cards.length > 0) results.push({ tag, cards });
   }
   return results;
