@@ -175,6 +175,7 @@ export function generateSuggestions({
       for (const t of tagData) {
         score += t.isPrimary ? 10 : 5;
         if (t.slug.startsWith("synergy-")) score += 2;
+        if (t.slug === "evasion") score -= 8;
       }
       score -= card.cmc * 0.5;
 
