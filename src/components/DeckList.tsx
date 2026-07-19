@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { ScryfallCard } from "@/types/mtg";
 import { groupCardsByType, getCardPrice, getBudgetTier, getCardTags, CardTag } from "@/lib/scryfall";
 import { isGameChanger } from "@/lib/gamechangers";
 import CardTooltip from "./CardTooltip";
 import ManaCost from "./ManaCost";
+import CardContextMenu from "./CardContextMenu";
 
 type SortMode = "cmc" | "alpha" | "price" | "color";
 
@@ -18,6 +19,12 @@ interface Props {
   lookingToAdd?: ScryfallCard[];
   onRemoveFromLookingToAdd?: (card: ScryfallCard) => void;
   onMoveToDeck?: (card: ScryfallCard) => void;
+  onChangePrinting?: (oldCard: ScryfallCard, newCard: ScryfallCard) => void;
+  onMoveToPondering?: (card: ScryfallCard) => void;
+  onAddToWishlist?: (card: ScryfallCard) => void;
+  pondering?: ScryfallCard[];
+  onRemoveFromPondering?: (card: ScryfallCard) => void;
+  onMovePonderingToDeck?: (card: ScryfallCard) => void;
 }
 
 const GROUP_ORDER = ["Creatures", "Instants", "Sorceries", "Enchantments", "Artifacts", "Planeswalkers", "Lands", "Other"];
@@ -65,8 +72,18 @@ const TAG_STYLES: Record<CardTag["kind"], string> = {
   tribe: "text-green-500/50 border border-green-900/40",
 };
 
-export default function DeckList({ cards, commander, partner, onRemove, onAdd, lookingToAdd = [], onRemoveFromLookingToAdd, onMoveToDeck }: Props) {
+export default function DeckList({
+  cards, commander, partner, onRemove, onAdd,
+  lookingToAdd = [], onRemoveFromLookingToAdd, onMoveToDeck,
+  onChangePrinting, onMoveToPondering, onAddToWishlist,
+  pondering = [], onRemoveFromPondering, onMovePonderingToDeck,
+}: Props) {
   const [sort, setSort] = useState<SortMode>("alpha");
+  const [ctxMenu, setCtxMenu] = useState<{ card: ScryfallCard; x: number; y: number; inDeck: boolean } | null>(null);
+
+  const showContextMenu = useCallback((card: ScryfallCard, x: number, y: number, inDeck: boolean) => {
+    setCtxMenu({ card, x, y, inDeck });
+  }, []);
 
   const groups = groupCardsByType(cards);
   const totalCards = cards.length + (commander ? 1 : 0) + (partner ? 1 : 0);
@@ -93,6 +110,22 @@ export default function DeckList({ cards, commander, partner, onRemove, onAdd, l
 
   return (
     <div className="space-y-3">
+      {ctxMenu && (
+        <CardContextMenu
+          card={ctxMenu.card}
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          onClose={() => setCtxMenu(null)}
+          onChangePrinting={(newCard) => {
+            onChangePrinting?.(ctxMenu.card, newCard);
+            setCtxMenu(null);
+          }}
+          onAddToWishlist={() => onAddToWishlist?.(ctxMenu.card)}
+          onMoveToPondering={ctxMenu.inDeck && onMoveToPondering
+            ? () => { onMoveToPondering(ctxMenu.card); setCtxMenu(null); }
+            : undefined}
+        />
+      )}
       {/* Header */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
@@ -138,8 +171,8 @@ export default function DeckList({ cards, commander, partner, onRemove, onAdd, l
                 ${[commander, partner].reduce((s, c) => s + (c ? (getCardPrice(c) ?? 0) : 0), 0).toFixed(2)}
               </span>
             </div>
-            {commander && <CardRow card={commander} onRemove={onRemove} isCommander />}
-            {partner && <CardRow card={partner} onRemove={onRemove} isCommander />}
+            {commander && <CardRow card={commander} onRemove={onRemove} isCommander onShowContextMenu={(c, x, y) => showContextMenu(c, x, y, false)} />}
+            {partner && <CardRow card={partner} onRemove={onRemove} isCommander onShowContextMenu={(c, x, y) => showContextMenu(c, x, y, false)} />}
           </div>
         )}
 
@@ -174,6 +207,7 @@ export default function DeckList({ cards, commander, partner, onRemove, onAdd, l
                       onAdd={onAdd}
                       colorIdentity={colorIdentity}
                       deckCardNames={deckCardNames}
+                      onShowContextMenu={(c, x, y) => showContextMenu(c, x, y, true)}
                     />
                   ));
                 })()}
@@ -204,6 +238,29 @@ export default function DeckList({ cards, commander, partner, onRemove, onAdd, l
           </div>
         </div>
       )}
+
+      {/* Pondering — cards moved out of the deck for reconsideration */}
+      {pondering.length > 0 && (
+        <div className="card-panel border border-cyan-800/40 mt-1">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold text-cyan-400 uppercase tracking-wider">
+              🤔 Pondering <span className="text-gray-600 font-normal normal-case">({pondering.length})</span>
+            </span>
+            <span className="text-xs text-gray-600">Not in deck — right-click to buy or move back</span>
+          </div>
+          <div className="space-y-0.5">
+            {pondering.map((card, i) => (
+              <PonderingRow
+                key={`${card.id}-${i}`}
+                card={card}
+                onMoveToDeck={onMovePonderingToDeck}
+                onRemove={onRemoveFromPondering}
+                onShowContextMenu={(c, x, y) => showContextMenu(c, x, y, false)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -216,6 +273,7 @@ function CardRow({
   deckCardNames,
   isCommander = false,
   count = 1,
+  onShowContextMenu,
 }: {
   card: ScryfallCard;
   onRemove: (c: ScryfallCard) => void;
@@ -224,6 +282,7 @@ function CardRow({
   deckCardNames?: string[];
   isCommander?: boolean;
   count?: number;
+  onShowContextMenu?: (card: ScryfallCard, x: number, y: number) => void;
 }) {
   const [showUpgrade, setShowUpgrade] = useState(false);
   const [faceIdx, setFaceIdx] = useState(0);
@@ -241,7 +300,10 @@ function CardRow({
   return (
     <>
       <CardTooltip card={card} faceIdx={faceIdx}>
-        <div className="py-1 px-1 rounded hover:bg-gray-800 group transition-colors">
+        <div
+          className="py-1 px-1 rounded hover:bg-gray-800 group transition-colors"
+          onContextMenu={(e) => { e.preventDefault(); onShowContextMenu?.(card, e.clientX, e.clientY); }}
+        >
           <div className="flex items-center gap-1.5 min-w-0">
             <span className={`text-sm truncate min-w-0 flex-1 ${isCommander ? "text-yellow-300 font-medium" : gc ? "text-yellow-200" : "text-gray-200"}`}>
               {count > 1 ? `${count}× ${card.name}` : card.name}
@@ -412,6 +474,55 @@ function UpgradePanel({
         </div>
       )}
     </div>
+  );
+}
+
+function PonderingRow({
+  card,
+  onMoveToDeck,
+  onRemove,
+  onShowContextMenu,
+}: {
+  card: ScryfallCard;
+  onMoveToDeck?: (card: ScryfallCard) => void;
+  onRemove?: (card: ScryfallCard) => void;
+  onShowContextMenu?: (card: ScryfallCard, x: number, y: number) => void;
+}) {
+  const price = getCardPrice(card);
+  const tier = getBudgetTier(price);
+  const manaCost = card.mana_cost ?? card.card_faces?.[0]?.mana_cost;
+  return (
+    <CardTooltip card={card}>
+      <div
+        className="flex items-center gap-1.5 py-1 px-1 rounded hover:bg-gray-800 group transition-colors"
+        onContextMenu={(e) => { e.preventDefault(); onShowContextMenu?.(card, e.clientX, e.clientY); }}
+      >
+        <span className="text-cyan-500 text-xs flex-shrink-0">🤔</span>
+        <span className="text-sm text-gray-200 truncate flex-1 min-w-0">{card.name}</span>
+        <ManaCost cost={manaCost} />
+        {price !== null && (
+          <span className={`text-xs flex-shrink-0 ${tier === "budget" ? "text-green-400" : tier === "mid" ? "text-blue-400" : "text-orange-400"}`}>
+            ${price.toFixed(2)}
+          </span>
+        )}
+        {onMoveToDeck && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onMoveToDeck(card); }}
+            className="text-[10px] px-1.5 py-0.5 rounded bg-green-900/60 text-green-400 hover:bg-green-700 border border-green-800/40 leading-none flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            → Deck
+          </button>
+        )}
+        {onRemove && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemove(card); }}
+            className="text-gray-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0 text-xs"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+    </CardTooltip>
   );
 }
 

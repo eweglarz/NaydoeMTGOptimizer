@@ -46,6 +46,12 @@ function DeckPageInner() {
   const [cards, setCards] = useState<ScryfallCard[]>([]);
   const [sideboard, setSideboard] = useState<ScryfallCard[]>([]);
   const [lookingToAdd, setLookingToAdd] = useState<ScryfallCard[]>([]);
+  const [pondering, setPondering] = useState<ScryfallCard[]>([]);
+  const [wishlist, setWishlist] = useState<ScryfallCard[]>(() => {
+    if (typeof window === "undefined") return [];
+    try { return JSON.parse(localStorage.getItem("mtg_wishlist") ?? "[]") as ScryfallCard[]; }
+    catch { return []; }
+  });
   const [suggestions, setSuggestions] = useState<OptimizationSuggestion[]>([]);
   const [deckScore, setDeckScore] = useState<DeckScore | null>(null);
   const [optimizeLoading, setOptimizeLoading] = useState(false);
@@ -125,6 +131,35 @@ function DeckPageInner() {
     addCard(card);
     removeFromLookingToAdd(card);
   }, [addCard, removeFromLookingToAdd]);
+
+  // Persist wishlist to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem("mtg_wishlist", JSON.stringify(wishlist));
+  }, [wishlist]);
+
+  const addToWishlist = useCallback((card: ScryfallCard) => {
+    setWishlist((prev) => prev.find((c) => c.id === card.id) ? prev : [...prev, card]);
+  }, []);
+
+  const moveToPondering = useCallback((card: ScryfallCard) => {
+    removeCard(card);
+    setPondering((prev) => prev.find((c) => c.id === card.id) ? prev : [...prev, card]);
+  }, [removeCard]);
+
+  const removeFromPondering = useCallback((card: ScryfallCard) => {
+    setPondering((prev) => prev.filter((c) => c.id !== card.id));
+  }, []);
+
+  const movePonderingToDeck = useCallback((card: ScryfallCard) => {
+    addCard(card);
+    removeFromPondering(card);
+  }, [addCard, removeFromPondering]);
+
+  const changePrinting = useCallback((oldCard: ScryfallCard, newCard: ScryfallCard) => {
+    setCards((prev) => prev.map((c) => c.id === oldCard.id ? newCard : c));
+    if (commander?.id === oldCard.id) setCommander(newCard);
+    if (partner?.id === oldCard.id) setPartner(newCard);
+  }, [commander, partner]);
 
   const handleImport = ({ commanders, cards: imported, sideboard: sb }: {
     commanders: ScryfallCard[]; cards: ScryfallCard[]; sideboard?: ScryfallCard[];
@@ -371,6 +406,12 @@ function DeckPageInner() {
                 lookingToAdd={lookingToAdd}
                 onRemoveFromLookingToAdd={removeFromLookingToAdd}
                 onMoveToDeck={moveToDeck}
+                onChangePrinting={changePrinting}
+                onMoveToPondering={moveToPondering}
+                onAddToWishlist={addToWishlist}
+                pondering={pondering}
+                onRemoveFromPondering={removeFromPondering}
+                onMovePonderingToDeck={movePonderingToDeck}
               />
               {sideboard.length > 0 && (
                 <div className="mt-4 card-panel border border-gray-700/50">
