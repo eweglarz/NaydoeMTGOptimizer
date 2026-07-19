@@ -26,7 +26,7 @@ export async function searchCards(query: string, page = 1): Promise<{
 }
 
 export async function searchCommanders(query: string): Promise<ScryfallCard[]> {
-  const q = `${query} is:commander legal:commander`;
+  const q = `${query} t:"legendary creature" legal:commander`;
   try {
     const res = await scryfallFetch<{ data: ScryfallCard[] }>(
       `/cards/search?q=${encodeURIComponent(q)}&order=edhrec`
@@ -163,7 +163,7 @@ export function getBudgetTier(price: number | null): "budget" | "mid" | "expensi
 export type CardTag =
   | { label: string; kind: "keyword" }
   | { label: string; kind: "tribe" }
-  | { label: "Destruction"; kind: "removal" }
+  | { label: "Interaction"; kind: "removal" }
   | { label: "Board Wipe"; kind: "removal" }
   | { label: "Utility"; kind: "utility" }
   | { label: "Card Draw"; kind: "draw" }
@@ -174,7 +174,9 @@ export type CardTag =
   | { label: "Counters"; kind: "counters" }
   | { label: string; kind: "named-counter" }
   | { label: "Copy"; kind: "copy" }
-  | { label: "Discard"; kind: "discard" };
+  | { label: "Discard"; kind: "discard" }
+  | { label: "Top Deck"; kind: "topdeck" }
+  | { label: "Cost Reducer"; kind: "cost-reducer" };
 
 export function getCardTags(card: ScryfallCard): CardTag[] {
   const tags: CardTag[] = [];
@@ -193,9 +195,14 @@ export function getCardTags(card: ScryfallCard): CardTag[] {
     tags.push({ label: kw, kind: "keyword" });
   }
 
-  // Targeted removal: "destroy target" or "exile target"
-  if (/\b(destroy|exile) target\b/i.test(oracle)) {
-    tags.push({ label: "Destruction", kind: "removal" });
+  // Indestructible granted via oracle text (cards that have it as a keyword are already caught above)
+  if (!tags.some((t) => t.label === "Indestructible") && /\bindestructible\b/i.test(oracle)) {
+    tags.push({ label: "Indestructible", kind: "keyword" });
+  }
+
+  // Targeted removal: "destroy/exile target" or "exile up to X target" etc.
+  if (/\b(destroy|exile)\b.{0,25}\btarget\b/i.test(oracle)) {
+    tags.push({ label: "Interaction", kind: "removal" });
   }
 
   // Board wipes: affects all/each permanents/creatures
@@ -233,10 +240,10 @@ export function getCardTags(card: ScryfallCard): CardTag[] {
     tags.push({ label: "Burn", kind: "burn" });
   }
 
-  // Tutor: searches library for a nonland card.
-  // Exclude pure land-fetches (fetch lands, ramp spells) by checking that the
-  // search target isn't a basic land type or generic "land card".
+  // Tutor: nonland cards that search library for a card.
+  // Exclude pure land-fetches by checking the search target isn't a basic land type.
   if (
+    !isLand &&
     /search your library for/i.test(oracle) &&
     !/search your library for (a |an |up to \w+ )?(basic )?(land|plains|island|swamp|mountain|forest)\b/i.test(oracle)
   ) {
@@ -302,6 +309,16 @@ export function getCardTags(card: ScryfallCard): CardTag[] {
     )
   ) {
     tags.push({ label: "Discard", kind: "discard" });
+  }
+
+  // Top Deck: cards that let you look at the top of your library
+  if (/\blook at the top (card|\d+ cards?) of your library\b/i.test(oracle)) {
+    tags.push({ label: "Top Deck", kind: "topdeck" });
+  }
+
+  // Cost Reducer: nonland cards that make spells cost less to cast
+  if (!isLand && /\bcosts? .{0,40} less to cast\b/i.test(oracle)) {
+    tags.push({ label: "Cost Reducer", kind: "cost-reducer" });
   }
 
   // Creature subtypes — always pushed last so they appear at the end of the tag row.

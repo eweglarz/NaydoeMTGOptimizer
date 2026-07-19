@@ -39,6 +39,7 @@ export interface ScryfallCard {
   scryfall_uri: string;
   set: string;
   set_name: string;
+  collector_number?: string;
   rarity: string;
   edhrec_rank?: number;
 }
@@ -95,9 +96,13 @@ export interface OptimizationSuggestion {
   budgetTier: "budget" | "mid" | "expensive";
   replaces?: ScryfallCard;
   isGameChanger?: boolean;
-  source?: "edhrec" | "scryfall";
-  /** For scryfall-sourced suggestions, the theme that matched */
+  source?: "edhrec" | "scryfall" | "tagger";
+  /** Theme label or matched tagger tag names (comma-joined) */
   sourceTheme?: string;
+  /** Scryfall Tagger tag slugs that matched (tagger source only) */
+  taggerTags?: string[];
+  /** Computed backend score for tagger suggestions (higher = better fit) */
+  taggerScore?: number;
 }
 
 export interface Deck {

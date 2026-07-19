@@ -59,6 +59,8 @@ const TAG_STYLES: Record<CardTag["kind"], string> = {
   "named-counter": "bg-sky-950 text-sky-300 border border-sky-800/50",
   copy: "bg-fuchsia-950 text-fuchsia-300 border border-fuchsia-800/50",
   discard: "bg-zinc-900 text-zinc-300 border border-zinc-700/50",
+  topdeck: "bg-cyan-950 text-cyan-300 border border-cyan-800/50",
+  "cost-reducer": "bg-yellow-950 text-yellow-300 border border-yellow-800/50",
   // Tribe tags are intentionally dim — visible but clearly secondary to functional tags
   tribe: "text-green-500/50 border border-green-900/40",
 };
@@ -155,16 +157,26 @@ export default function DeckList({ cards, commander, partner, onRemove, onAdd, l
                 <span className="text-xs text-gray-500">${groupCost.toFixed(2)}</span>
               </div>
               <div className="space-y-0.5">
-                {sorted.map((card, idx) => (
-                  <CardRow
-                    key={`${card.id}-${idx}`}
-                    card={card}
-                    onRemove={onRemove}
-                    onAdd={onAdd}
-                    colorIdentity={colorIdentity}
-                    deckCardNames={deckCardNames}
-                  />
-                ))}
+                {(() => {
+                  const deduped: { card: ScryfallCard; count: number }[] = [];
+                  const nameIdx = new Map<string, number>();
+                  for (const card of sorted) {
+                    const existing = nameIdx.get(card.name);
+                    if (existing !== undefined) deduped[existing].count++;
+                    else { nameIdx.set(card.name, deduped.length); deduped.push({ card, count: 1 }); }
+                  }
+                  return deduped.map(({ card, count }) => (
+                    <CardRow
+                      key={card.id}
+                      card={card}
+                      count={count}
+                      onRemove={onRemove}
+                      onAdd={onAdd}
+                      colorIdentity={colorIdentity}
+                      deckCardNames={deckCardNames}
+                    />
+                  ));
+                })()}
               </div>
             </div>
           );
@@ -203,6 +215,7 @@ function CardRow({
   colorIdentity,
   deckCardNames,
   isCommander = false,
+  count = 1,
 }: {
   card: ScryfallCard;
   onRemove: (c: ScryfallCard) => void;
@@ -210,32 +223,46 @@ function CardRow({
   colorIdentity?: string[];
   deckCardNames?: string[];
   isCommander?: boolean;
+  count?: number;
 }) {
   const [showUpgrade, setShowUpgrade] = useState(false);
+  const [faceIdx, setFaceIdx] = useState(0);
   const price = getCardPrice(card);
   const tier = getBudgetTier(price);
   const tags = getCardTags(card);
   const gc = isGameChanger(card.name);
   const manaCost = card.mana_cost ?? card.card_faces?.[0]?.mana_cost;
 
-  useEffect(() => { setShowUpgrade(false); }, [card.id]);
+  useEffect(() => { setShowUpgrade(false); setFaceIdx(0); }, [card.id]);
 
   const hasUpgradableTags = tags.some((t) => t.kind !== "keyword");
+  const isMdfc = (card.card_faces?.length ?? 0) >= 2 && card.card_faces?.[1]?.image_uris != null;
 
   return (
     <>
-      <CardTooltip card={card}>
+      <CardTooltip card={card} faceIdx={faceIdx}>
         <div className="py-1 px-1 rounded hover:bg-gray-800 group transition-colors">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className={`text-sm truncate min-w-0 flex-1 ${isCommander ? "text-yellow-300 font-medium" : gc ? "text-yellow-200" : "text-gray-200"}`}>
-              {card.name}
+              {count > 1 ? `${count}× ${card.name}` : card.name}
             </span>
+            {isMdfc && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setFaceIdx((i) => i === 0 ? 1 : 0); }}
+                title={`Show ${faceIdx === 0 ? "back" : "front"} face`}
+                style={{ fontSize: "14px", lineHeight: 1 }}
+                className="text-gray-500 hover:text-gray-200 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                ↕
+              </button>
+            )}
             <ManaCost cost={manaCost} />
             {!isCommander && onAdd && (
               <button
                 onClick={(e) => { e.stopPropagation(); if (hasUpgradableTags) setShowUpgrade((v) => !v); }}
                 title={hasUpgradableTags ? "Find upgrade suggestions" : undefined}
-                className={`text-xs flex-shrink-0 transition-colors ${
+                style={{ fontSize: "14px", lineHeight: 1 }}
+                className={`flex-shrink-0 transition-colors ${
                   !hasUpgradableTags
                     ? "invisible pointer-events-none"
                     : showUpgrade
@@ -318,6 +345,7 @@ function UpgradePanel({
         tags,
         colorIdentity,
         cmc: card.cmc,
+        typeLine: card.type_line,
         deckCardNames,
       }),
     })

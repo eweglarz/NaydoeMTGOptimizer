@@ -71,20 +71,6 @@ export default function HomePage() {
         {/* Import */}
         <DeckImport onImport={handleImport} />
 
-        {/* Features */}
-        <div className="grid grid-cols-3 gap-3 text-center">
-          {[
-            { icon: "🔮", title: "Synergy Analysis", desc: "EDHREC-powered card synergy scores" },
-            { icon: "💰", title: "Budget Options", desc: "Filter by budget, mid, or premium cards" },
-            { icon: "⭐", title: "Game Changers", desc: "Instantly spot high-impact upgrades" },
-          ].map((f) => (
-            <div key={f.title} className="card-panel text-center space-y-1">
-              <div className="text-2xl">{f.icon}</div>
-              <div className="text-sm font-semibold text-gray-200">{f.title}</div>
-              <div className="text-xs text-gray-500">{f.desc}</div>
-            </div>
-          ))}
-        </div>
       </div>
     </div>
   );

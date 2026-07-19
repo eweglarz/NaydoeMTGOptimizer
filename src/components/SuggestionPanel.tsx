@@ -6,15 +6,8 @@ import { getCardPrice } from "@/lib/scryfall";
 import { ScryfallCard } from "@/types/mtg";
 import CardTooltip from "./CardTooltip";
 
-interface DeckScore {
-  score: number;
-  label: string;
-  details: string;
-}
-
 interface Props {
   suggestions: OptimizationSuggestion[];
-  deckScore: DeckScore | null;
   onAddCard: (card: ScryfallCard) => void;
   onRemoveCard: (card: ScryfallCard) => void;
   onAddToLookingToAdd?: (card: ScryfallCard) => void;
@@ -32,7 +25,7 @@ const BUDGET_LABELS: Record<BudgetTier, string> = {
 
 type SuggestionType = "all" | "add" | "cut" | "upgrade";
 type CardTypeFilter = "all" | "Creatures" | "Instants" | "Sorceries" | "Enchantments" | "Artifacts" | "Planeswalkers" | "Lands";
-type SourceFilter = "all" | "edhrec" | "scryfall";
+type SourceFilter = "all" | "edhrec" | "tagger";
 
 const CARD_TYPE_KEYWORDS: Record<Exclude<CardTypeFilter, "all">, string> = {
   Creatures: "Creature",
@@ -44,7 +37,7 @@ const CARD_TYPE_KEYWORDS: Record<Exclude<CardTypeFilter, "all">, string> = {
   Lands: "Land",
 };
 
-export default function SuggestionPanel({ suggestions, deckScore, onAddCard, onRemoveCard, onAddToLookingToAdd, loading, commanderName }: Props) {
+export default function SuggestionPanel({ suggestions, onAddCard, onRemoveCard, onAddToLookingToAdd, loading }: Props) {
   const [budgetFilter, setBudgetFilter] = useState<BudgetTier>("all");
   const [typeFilter, setTypeFilter] = useState<SuggestionType>("all");
   const [cardTypeFilter, setCardTypeFilter] = useState<CardTypeFilter>("all");
@@ -55,40 +48,16 @@ export default function SuggestionPanel({ suggestions, deckScore, onAddCard, onR
     if (budgetFilter !== "all" && s.budgetTier !== budgetFilter) return false;
     if (cardTypeFilter !== "all" && !s.card.type_line.includes(CARD_TYPE_KEYWORDS[cardTypeFilter])) return false;
     if (sourceFilter === "edhrec" && s.source !== "edhrec") return false;
-    if (sourceFilter === "scryfall" && s.source !== "scryfall") return false;
+    if (sourceFilter === "tagger" && s.source !== "tagger") return false;
     return true;
   });
 
-  // Game changers to ADD (not yet in deck)
   const gameChangersToAdd = suggestions.filter((s) => s.type === "add" && s.isGameChanger);
-  // Game changers already IN the deck (bracket warnings)
   const gameChangersInDeck = suggestions.filter((s) => s.type === "cut" && s.isGameChanger);
-
-  const scryfallCount = suggestions.filter((s) => s.source === "scryfall").length;
+  const taggerCount = suggestions.filter((s) => s.source === "tagger").length;
 
   return (
     <div className="space-y-4">
-      {deckScore && (
-        <div className="card-panel">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-semibold text-gray-200">Deck Score</span>
-            <span className={`text-sm font-bold ${deckScore.score >= 70 ? "text-green-400" : deckScore.score >= 40 ? "text-yellow-400" : "text-red-400"}`}>
-              {deckScore.score}/100
-            </span>
-          </div>
-          <div className="w-full bg-gray-800 rounded-full h-2 mb-1">
-            <div
-              className={`h-2 rounded-full transition-all ${deckScore.score >= 70 ? "bg-green-500" : deckScore.score >= 40 ? "bg-yellow-500" : "bg-red-500"}`}
-              style={{ width: `${deckScore.score}%` }}
-            />
-          </div>
-          <div className="flex justify-between text-xs text-gray-500">
-            <span>{deckScore.label}</span>
-            <span>{deckScore.details}</span>
-          </div>
-        </div>
-      )}
-
       {gameChangersInDeck.length > 0 && (
         <div className="card-panel border border-red-500/40 bg-red-500/5">
           <div className="text-xs font-semibold text-red-400 uppercase tracking-wider mb-1">
@@ -167,23 +136,23 @@ export default function SuggestionPanel({ suggestions, deckScore, onAddCard, onR
           ))}
         </div>
 
-        {/* Source filter */}
+        {/* Source filter — EDHREC and Tagger only */}
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-xs text-gray-500 mr-0.5">Source</span>
           {([
             { id: "all" as SourceFilter, label: "All" },
             { id: "edhrec" as SourceFilter, label: "EDHREC" },
-            { id: "scryfall" as SourceFilter, label: `Scryfall${scryfallCount > 0 ? ` (${scryfallCount})` : ""}` },
+            { id: "tagger" as SourceFilter, label: `Tagger${taggerCount > 0 ? ` (${taggerCount})` : ""}` },
           ]).map(({ id, label }) => (
             <button
               key={id}
               onClick={() => setSourceFilter(id)}
               className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
                 sourceFilter === id
-                  ? id === "scryfall"
-                    ? "bg-cyan-800 text-cyan-100"
-                    : id === "edhrec"
+                  ? id === "edhrec"
                     ? "bg-purple-800 text-purple-100"
+                    : id === "tagger"
+                    ? "bg-amber-800 text-amber-100"
                     : "bg-gray-600 text-white"
                   : "bg-gray-800 text-gray-400 hover:text-white"
               }`}
@@ -228,13 +197,27 @@ function SuggestionRow({
   onSaveLater?: (c: ScryfallCard) => void;
 }) {
   const price = getCardPrice(s.card);
+  const canAdd = s.type === "add" || s.type === "upgrade";
+
+  const leftIcon =
+    s.isGameChanger && s.type === "add" ? "⭐" :
+    s.isGameChanger && s.type === "cut" ? "⚠️" :
+    s.type === "add" ? "➕" :
+    s.type === "cut" ? "✂️" : "⬆️";
 
   return (
     <CardTooltip card={s.card}>
       <div className={`flex items-start gap-2 p-2 rounded-lg hover:bg-gray-800 transition-colors group ${s.isGameChanger ? "border-l-2 border-yellow-500/60 pl-2" : ""}`}>
-        <span className="flex-shrink-0 mt-0.5">
-          {s.isGameChanger && s.type === "add" ? "⭐" : s.isGameChanger && s.type === "cut" ? "⚠️" : s.type === "add" ? "➕" : s.type === "cut" ? "✂️" : "⬆️"}
-        </span>
+        {/* Left icon — clicking ➕ or ⬆️ adds the card */}
+        <button
+          className={`flex-shrink-0 mt-0.5 leading-none text-base ${canAdd ? "cursor-pointer hover:scale-125 transition-transform active:scale-95" : "cursor-default"}`}
+          onClick={(e) => { e.stopPropagation(); if (canAdd) onAdd(s.card); }}
+          title={canAdd ? `Add ${s.card.name} to deck` : undefined}
+          disabled={!canAdd}
+        >
+          {leftIcon}
+        </button>
+
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className={`text-sm font-medium ${s.isGameChanger ? "text-yellow-300" : "text-white"}`}>{s.card.name}</span>
@@ -260,10 +243,14 @@ function SuggestionRow({
                   : ""}
               </span>
             )}
-            {/* Source badge */}
-            {s.source === "scryfall" ? (
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800/50 leading-none">
-                Scryfall · {s.sourceTheme}
+            {s.source === "tagger" ? (
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800/50 leading-none"
+                title={s.sourceTheme}
+              >
+                Tagger · {s.taggerTags && s.taggerTags.length > 1
+                  ? `${s.taggerTags.length} tags`
+                  : s.taggerTags?.[0] ?? s.sourceTheme}
               </span>
             ) : s.source === "edhrec" ? (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-950 text-purple-400 border border-purple-800/50 leading-none">
@@ -273,25 +260,17 @@ function SuggestionRow({
           </div>
           <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">{s.reason}</p>
         </div>
+
+        {/* Right side — ★ save for later, Cut button */}
         <div className="flex gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-          {(s.type === "add" || s.type === "upgrade") && (
-            <>
-              <button
-                onClick={(e) => { e.stopPropagation(); onAdd(s.card); }}
-                className="text-xs bg-green-700 hover:bg-green-600 text-white px-2 py-0.5 rounded transition-colors"
-              >
-                Add
-              </button>
-              {onSaveLater && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); onSaveLater(s.card); }}
-                  title="Add to Looking to Add"
-                  className="text-xs bg-purple-900 hover:bg-purple-700 text-purple-300 px-2 py-0.5 rounded transition-colors"
-                >
-                  ★ Later
-                </button>
-              )}
-            </>
+          {canAdd && onSaveLater && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onSaveLater(s.card); }}
+              title="Save for later"
+              className="text-xs bg-purple-900 hover:bg-purple-700 text-purple-300 px-2 py-0.5 rounded transition-colors"
+            >
+              ★
+            </button>
           )}
           {(s.type === "cut" || s.type === "upgrade") && s.replaces && (
             <button

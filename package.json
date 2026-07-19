@@ -6,13 +6,15 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "sync-cards": "node scripts/sync-cards.mjs"
+    "sync-cards": "node scripts/sync-cards.mjs",
+    "sync-oracle-tags": "node scripts/startup.mjs"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.1",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.11.1",
     "jose": "^6.2.3",
+    "mana-font": "^1.18.0",
     "next": "^16.2.9",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"

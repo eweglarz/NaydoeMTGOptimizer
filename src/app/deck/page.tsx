@@ -407,7 +407,6 @@ function DeckPageInner() {
           {tab === "suggestions" && (
             <SuggestionPanel
               suggestions={suggestions}
-              deckScore={deckScore}
               onAddCard={addCard}
               onRemoveCard={removeCard}
               onAddToLookingToAdd={addToLookingToAdd}

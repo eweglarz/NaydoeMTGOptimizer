@@ -2,6 +2,7 @@ import { ScryfallCard, OptimizationSuggestion, EdhrecRecommendation } from "@/ty
 import { getCardPrice, getBudgetTier } from "./scryfall";
 import { isGameChanger } from "./gamechangers";
 import { ScryfallThemeResult } from "./scryfallSynergy";
+import { TaggerTagResult } from "./scryfallTagger";
 
 
 interface OptimizerInput {
@@ -13,6 +14,8 @@ interface OptimizerInput {
   scryfallThemeResults?: ScryfallThemeResult[];
   /** Pre-fetched CMC-based upgrade pairs: lower-CMC Scryfall alternatives per function category */
   cmcUpgrades?: Array<{ candidate: ScryfallCard; replaces: ScryfallCard; tagKind: string }>;
+  /** Per-tag results from Scryfall Tagger search */
+  taggerTagResults?: TaggerTagResult[];
 }
 
 export function generateSuggestions({
@@ -22,6 +25,7 @@ export function generateSuggestions({
   budgetFilter = "all",
   scryfallThemeResults = [],
   cmcUpgrades = [],
+  taggerTagResults = [],
 }: OptimizerInput): OptimizationSuggestion[] {
   const deckNames = new Set(deckCards.map((c) => c.name.toLowerCase()));
   const suggestions: OptimizationSuggestion[] = [];
@@ -121,41 +125,114 @@ export function generateSuggestions({
     });
   }
 
-  // ADD suggestions from Scryfall advanced search (theme-based, not in EDHREC)
-  const addedScryfallNames = new Set<string>();
-  for (const { theme, cards } of scryfallThemeResults) {
-    for (const card of cards) {
-      const key = card.name.toLowerCase();
-      if (deckNames.has(key)) continue;
-      if (edhrecMap.has(key)) continue; // EDHREC already covers this card
-      if (addedScryfallNames.has(key)) continue; // dedup across themes
+  // Track names already in suggestions to deduplicate tagger results.
+  // Cards already suggested via EDHREC won't appear again as tagger suggestions,
+  // but cards in the EDHREC dataset that weren't shown (outside the top-60 resolved
+  // set) can appear as tagger suggestions and have their inclusion data used for scoring.
+  const alreadySuggested = new Set(suggestions.map((s) => s.card.name.toLowerCase()));
 
+  // ADD suggestions from Scryfall Tagger tag search.
+  // Cards are merged across tags so a card matching multiple tags shows all of them.
+  // Backend score per suggestion:
+  //   +10  per primary (directly-applied "oracle") tag match
+  //   +5   per inherited/pendant tag match
+  //   +2   additional per "synergy-" prefixed slug
+  //   -0.5 × CMC  (lower mana cost rewarded)
+  //   +15 × inclusionRate  if card has EDHREC inclusion data for this commander
+  //   +5  × synergyScore   if EDHREC synergy is positive
+  if (taggerTagResults.length > 0) {
+    type TagData = { slug: string; name: string; isPrimary: boolean };
+    const taggerCardMap = new Map<string, ScryfallCard>();
+    const taggerCardTagData = new Map<string, TagData[]>();
+
+    for (const { tag, cards } of taggerTagResults) {
+      for (const card of cards) {
+        const key = card.name.toLowerCase();
+        if (!taggerCardMap.has(key)) taggerCardMap.set(key, card);
+        const existing = taggerCardTagData.get(key);
+        const entry: TagData = { slug: tag.slug, name: tag.name, isPrimary: tag.isPrimary };
+        if (existing) {
+          if (!existing.some((t) => t.slug === tag.slug)) existing.push(entry);
+        } else {
+          taggerCardTagData.set(key, [entry]);
+        }
+      }
+    }
+
+    const taggerSuggestions: Array<{ suggestion: OptimizationSuggestion; score: number }> = [];
+
+    for (const [key, tagData] of taggerCardTagData) {
+      if (deckNames.has(key)) continue;
+      if (alreadySuggested.has(key)) continue;
+
+      const card = taggerCardMap.get(key)!;
       const price = getCardPrice(card);
       const tier = getBudgetTier(price);
       if (budgetFilter !== "all" && tier !== budgetFilter) continue;
 
-      addedScryfallNames.add(key);
-      suggestions.push({
-        type: "add",
-        card,
-        reason: `Scryfall: matches your deck's "${theme}" strategy`,
-        budgetTier: tier,
-        source: "scryfall",
-        sourceTheme: theme,
-        isGameChanger: isGameChanger(card.name),
+      // Tag-based score
+      let score = 0;
+      for (const t of tagData) {
+        score += t.isPrimary ? 10 : 5;
+        if (t.slug.startsWith("synergy-")) score += 2;
+      }
+      score -= card.cmc * 0.5;
+
+      // EDHREC commander-specific bonus
+      const edhrecData = edhrecMap.get(key);
+      if (edhrecData) {
+        score += edhrecData.inclusion_rate * 15;
+        if ((edhrecData.synergy_score ?? 0) > 0) score += edhrecData.synergy_score! * 5;
+      }
+
+      const matchedNames = tagData.map((t) => t.name);
+      const tagLabel =
+        matchedNames.length === 1
+          ? `"${matchedNames[0]}"`
+          : `${matchedNames.length} tags (${matchedNames.slice(0, 3).join(", ")}${matchedNames.length > 3 ? "…" : ""})`;
+
+      const edhrecSuffix = edhrecData
+        ? ` · ${Math.round(edhrecData.inclusion_rate * 100)}% of EDHREC decks`
+        : "";
+
+      taggerSuggestions.push({
+        suggestion: {
+          type: "add" as const,
+          card,
+          reason: `Shares ${tagLabel} with your commander (Scryfall Tagger)${edhrecSuffix}`,
+          budgetTier: tier,
+          source: "tagger" as const,
+          sourceTheme: matchedNames.join(", "),
+          taggerTags: matchedNames,
+          taggerScore: score,
+          inclusionRate: edhrecData?.inclusion_rate,
+          numDecks: edhrecData?.num_decks,
+          synergyScore: edhrecData?.synergy_score,
+          isGameChanger: isGameChanger(card.name),
+        },
+        score,
       });
     }
+
+    // Sort tagger suggestions by score descending before appending
+    taggerSuggestions.sort((a, b) => b.score - a.score);
+    for (const { suggestion } of taggerSuggestions) suggestions.push(suggestion);
   }
 
-  // Sort: game changers first → adds (EDHREC by synergy, then Scryfall) → cuts/upgrades
+  // Sort: game changers first → adds (EDHREC → tagger → scryfall) → cuts/upgrades
+  // Within tagger adds, preserve the score-based order above.
   return suggestions.sort((a, b) => {
     if (a.isGameChanger && !b.isGameChanger) return -1;
     if (b.isGameChanger && !a.isGameChanger) return 1;
     if (a.type === "add" && b.type !== "add") return -1;
     if (b.type === "add" && a.type !== "add") return 1;
-    // Within adds: EDHREC before Scryfall, then by synergy score
-    if (a.source === "edhrec" && b.source === "scryfall") return -1;
-    if (a.source === "scryfall" && b.source === "edhrec") return 1;
+    // Within adds: EDHREC > tagger > scryfall
+    const sourceOrder = (s: string | undefined) =>
+      s === "edhrec" ? 0 : s === "tagger" ? 1 : 2;
+    const diff = sourceOrder(a.source) - sourceOrder(b.source);
+    if (diff !== 0) return diff;
+    // Within same source: EDHREC by synergy score, tagger by taggerScore
+    if (a.source === "tagger") return (b.taggerScore ?? 0) - (a.taggerScore ?? 0);
     return (b.synergyScore ?? 0) - (a.synergyScore ?? 0);
   });
 }

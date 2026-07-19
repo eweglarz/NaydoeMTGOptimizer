@@ -1,6 +1,6 @@
 # NaydoeMTG Optimizer
 
-A Commander/EDH deck optimization tool built with Next.js. Search for commanders, import your deck list, analyze card synergies using EDHREC data, and get actionable suggestions to tune your 99.
+A Commander/EDH deck optimization tool built with Next.js. Search for commanders, import your deck list, analyze card synergies using EDHREC data and Scryfall Tagger oracle tags, and get actionable suggestions to tune your 99.
 
 ---
 
@@ -62,6 +62,7 @@ Commander: Atraxa, Praetors' Voice
 
 - Cards grouped by type: **Creatures · Instants · Sorceries · Enchantments · Artifacts · Planeswalkers · Lands · Other**
 - Commander(s) shown in their own pinned panel; label reads "Commanders" when a partner is present
+- Duplicate basic lands shown as `4× Forest` with the same inline styling as the card name
 - Sort by: **Mana Value · Alphabetical · Price · Color**
 - Card count indicator (green at 100/100, yellow when building, red if over)
 - Total deck cost
@@ -73,11 +74,11 @@ Commander: Atraxa, Praetors' Voice
 
 Each card row shows (left to right):
 
-1. **Card name** — yellow for commander/partner, gold highlight for Game Changers
+1. **Card name** — yellow for commander/partner, gold highlight for Game Changers; duplicate count appears inline as `N×` prefix
 2. **★ Game Changer badge** — shown for any card on the Commander Brackets official game-changer list
 3. **Mana cost** — colored pip symbols rendered in pure CSS (no external font): W/U/B/R/G/C/X and hybrid mana
 4. **⬆ Upgrade button** — appears on hover for cards with searchable function tags (see Upgrades below)
-5. **Price** — color-coded: green < $5 · blue $5–$20 · orange ≥ $20
+5. **Price** — color-coded: green < $5 · blue $5–$20 · orange ≥ $20; if a printing has no USD price, the cheapest available paper printing price is shown instead
 6. **✕ Remove button** — appears on hover
 
 ---
@@ -96,6 +97,7 @@ Automatic tags appear below each card name, color-coded by category.
 | Life Gain | Rose | `gains N life` on nonland cards |
 | Burn | Orange | Deals damage to opponents/players, or makes opponents lose life |
 | Tutor | Amber | `search your library for` a nonland card |
+| Cost Reducer | Yellow | Makes spells cost less to cast (e.g. Ruby Medallion, Jukai Naturalist) |
 | Control | Indigo | Counterspells, stax, `can't cast`, tax effects (`unless ... pays`) |
 | Counters | Teal | `+1/+1` or `-1/-1` counter placement |
 | Named Counters | Sky | Individual tags for: Experience · Poison · Energy · Oil · Charge · Spore · Lore · Age · Time · Fate · Ice · Level · Flood · Bounty · Acorn · Ki · Feather · Fade · Rust · Study · Verse · Depletion · Blood · Shield · Quest · Infection · Plague |
@@ -130,16 +132,35 @@ Upgrade search categories map to these Scryfall queries:
 
 ---
 
-### Optimizer (EDHREC + Scryfall Synergy)
+### Optimizer (EDHREC + Scryfall Tagger)
 
 Click **✨ Optimize Deck** to run the full optimizer:
 
 - **Deck Score** — 0–100 EDHREC synergy score for the current 99
-- **Add suggestions** — high-synergy cards not yet in your deck
+- **Add suggestions** — high-synergy cards not yet in your deck, sourced from:
+  - **EDHREC** — top cards by synergy score for your specific commander
+  - **Scryfall Tagger** — cards sharing oracle tags with your commander (see below)
 - **Cut suggestions** — low-synergy or zero-EDHREC-presence cards
-- **Upgrade suggestions** — cheaper or stronger alternatives to existing cards
+- **Upgrade suggestions** — cheaper or stronger alternatives to existing cards (by CMC)
 - **Game Changer flags** — high-impact cards identified per Commander Brackets guidelines
 - **Filters**: Add / Cut / Upgrade · Budget / Mid / Expensive · card type
+
+#### Scryfall Tagger Suggestions
+
+The optimizer fetches your commander's oracle tags from Scryfall Tagger and searches the local card DB for other cards that share those tags. Each suggestion gets a backend score:
+
+| Factor | Points |
+|---|---|
+| Primary oracle tag match (directly applied) | +10 per tag |
+| Inherited/pendant tag match | +5 per tag |
+| `synergy-` prefixed slug | +2 bonus per tag |
+| Mana value penalty | −0.5 × CMC |
+| EDHREC inclusion rate for this commander | +15 × inclusion % |
+| Positive EDHREC synergy score | +5 × synergy score |
+
+Tagger suggestions are sorted by this score. Cards already shown as EDHREC suggestions are excluded; cards that have EDHREC data but weren't in the top-60 EDHREC results will surface here with their commander-specific inclusion % displayed.
+
+> **Note**: Tagger suggestions require the local oracle tag index. Run `POST /api/admin/sync-oracle-tags` once after deploy, or let the Railway startup script handle it automatically.
 
 ---
 
@@ -156,9 +177,12 @@ The **Buy Cards** tab generates a consolidated buy list of all cards in your dec
 | Framework | Next.js 16 (App Router) |
 | Language | TypeScript |
 | Styling | Tailwind CSS v4 |
-| Card Data | Scryfall API |
+| Card Data | Scryfall API + local SQLite bulk cache |
 | Synergy Data | EDHREC (unofficial JSON API) |
+| Oracle Tags | Scryfall Tagger (GraphQL) + local oracle_tag_index |
+| Local DB | SQLite via `better-sqlite3` |
 | Deck Import | Text export parsing (Moxfield, MTGO, Arena, plain text) |
+| Hosting | Railway (persistent volume for SQLite DB) |
 
 ---
 
@@ -177,6 +201,9 @@ src/
 │       ├── optimize/route.ts         # POST: run optimizer → suggestions + score
 │       ├── upgrade/route.ts          # POST: per-card upgrade search via Scryfall
 │       ├── edhrec/route.ts           # GET: EDHREC commander data
+│       ├── admin/
+│       │   ├── sync-cards/route.ts   # POST: download Scryfall oracle-cards → cards.db
+│       │   └── sync-oracle-tags/     # POST: import oracle-tags.jsonl → oracle_tag_index
 │       └── scryfall/
 │           ├── search/route.ts       # GET: card search proxy
 │           └── card/route.ts         # GET: single card by name
@@ -202,6 +229,15 @@ src/
 │   │                                 #   getCardImage, getCardPrice, getBudgetTier
 │   │                                 #   groupCardsByType
 │   │                                 #   CardTag union type
+│   ├── scryfallServer.ts             # Server-side Scryfall helpers
+│   │                                 #   getCardByNameSafe — local DB → API fallback
+│   │                                 #   getCardsByNamesSafe — bulk resolution
+│   │                                 #   fillMissingPrices — cheapest printing fallback
+│   ├── scryfallTagger.ts             # Scryfall Tagger GraphQL client
+│   │                                 #   getCommanderTaggerTags — fetches oracle tags
+│   │                                 #   getTaggerTagSuggestions — local DB lookup
+│   ├── oracleTagDb.ts                # oracle_tag_index SQLite helpers
+│   │                                 #   hasOracleTagData, getLocalCardsByTag
 │   ├── moxfield.ts                   # Text deck list parser
 │   │                                 #   tryDetectSeparatedCommanders
 │   │                                 #     — blank-line paragraph detection
@@ -211,13 +247,18 @@ src/
 │   │                                 #     — sideboard header detection (SIDEBOARD_HEADER_RE)
 │   │                                 #   parseTextDeckList — section-header line parser
 │   ├── optimizer.ts                  # Suggestion + deck score logic
+│   │                                 #   EDHREC adds/cuts, CMC upgrades, tagger scoring
 │   ├── edhrec.ts                     # EDHREC data fetching + slugification
 │   ├── scryfallSynergy.ts            # Scryfall-based synergy fallback search
 │   └── gamechangers.ts               # Commander Brackets game changer list
-└── types/
-    └── mtg.ts                        # TypeScript interfaces
-                                      #   ScryfallCard, DeckCard, OptimizationSuggestion
-                                      #   EdhrecCard, EdhrecRecommendation, etc.
+├── types/
+│   └── mtg.ts                        # TypeScript interfaces
+│                                     #   ScryfallCard, DeckCard, OptimizationSuggestion
+│                                     #   EdhrecCard, EdhrecRecommendation, etc.
+scripts/
+└── startup.mjs                       # Railway bootstrap: cards.db + oracle_tag_index
+oracle-tags.jsonl                     # Scryfall oracle tag assignments (~17 MB)
+railway.toml                          # Railway deployment config
 ```
 
 ---
@@ -252,6 +293,20 @@ npm start
 
 ---
 
+## Deploying to Railway
+
+1. Push this repo to GitHub (including `oracle-tags.jsonl`, `railway.toml`, `scripts/startup.mjs`)
+2. Create a new Railway project → **Deploy from GitHub repo**
+3. Add a **Persistent Volume** mounted at `/app/data` so `cards.db` survives redeploys
+4. Railway will run `node scripts/startup.mjs && npm start` on each deploy
+   - First deploy: downloads Scryfall oracle-cards bulk file (~30 MB) and imports `oracle-tags.jsonl` into SQLite
+   - Subsequent deploys: both steps are skipped if the DB is already populated (volume persists)
+5. No environment variables required for basic operation
+
+> If you need to force a fresh card sync, delete `data/cards.db` from the Railway volume shell and redeploy.
+
+---
+
 ## External APIs
 
 ### Scryfall
@@ -260,10 +315,18 @@ npm start
 - **Bulk name lookup**: `POST /cards/collection` — up to 75 identifiers per request; DFCs indexed by both canonical name and front-face name
 - **Single card**: `GET /cards/named?exact=` with `?fuzzy=` fallback; also re-keys under the queried name to handle canonical-name mismatches (collaboration cards, etc.)
 - **Search**: `GET /cards/search?q=&order=edhrec` — used for upgrade suggestions
+- **Price fallback**: `GET /cards/search?q=!"Name" game:paper&order=usd&dir=asc&unique=prints` — fetches cheapest paper printing when the resolved card has no USD price
 - **Autocomplete**: `GET /cards/autocomplete?q=`
 - **Image CDN**: `cards.scryfall.io`, `c1.scryfall.com`
 - Responses are cached for 1 hour via Next.js `revalidate: 3600`
 - `User-Agent` header identifies the app per Scryfall's API policy
+
+### Scryfall Tagger
+
+- **Base URL**: `https://tagger.scryfall.com`
+- Requires a 2-step authentication: `GET /card/{set}/{number}` → CSRF token + session cookie, then `POST /graphql`
+- Oracle tags are fetched for the commander once per optimize run and cached 24h
+- Local oracle tag assignments are stored in `oracle_tag_index` (SQLite) to avoid per-card API calls at suggestion time
 
 ### EDHREC (unofficial)
 
@@ -286,6 +349,7 @@ npm start
 - Moxfield direct URL import is blocked — text export is required
 - Scryfall bulk endpoint resolves up to 75 names per request; large decks use multiple requests with fuzzy fallback for any unresolved names
 - Very new or niche cards (some Universes Beyond collaborations) may not be in Scryfall's database and will be silently skipped
+- Scryfall Tagger GraphQL requires session credentials fetched at runtime; if Tagger changes its auth flow, the commander tag fetch will silently return no results
 
 ---
 

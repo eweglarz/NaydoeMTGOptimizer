@@ -27,9 +27,17 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Local card database (large, regeneratable via npm run sync-cards)
+# Local SQLite databases (large / ephemeral — regenerated at startup on Railway)
 data/cards.db
+data/cards.db-shm
+data/cards.db-wal
 data/cards_tmp.json
+data/app.db
+data/app.db-shm
+data/app.db-wal
+
+# Scryfall bulk data dumps (too large for git — run sync endpoints to rebuild)
+ScryfallBulk/
 
 # OS
 .DS_Store

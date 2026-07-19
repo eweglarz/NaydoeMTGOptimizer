@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "mana-font/css/mana.css";
 import { AuthProvider } from "@/components/AuthProvider";
 import NavAuth from "@/components/NavAuth";
 
