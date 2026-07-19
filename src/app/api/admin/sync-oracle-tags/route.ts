@@ -7,18 +7,40 @@ import { getOracleTagStats } from "@/lib/oracleTagDb";
 import { requireAdminKey } from "@/lib/adminAuth";
 
 const CARDS_DB_PATH = path.join(process.cwd(), "data", "cards.db");
+const STATUS_PATH = path.join(process.cwd(), "data", "sync-oracle-tags-status.json");
+
+interface SyncStatus {
+  inProgress: boolean;
+  startedAt: string | null;
+  error: string | null;
+}
+
+function readStatus(): SyncStatus {
+  try {
+    if (!fs.existsSync(STATUS_PATH)) return { inProgress: false, startedAt: null, error: null };
+    const raw = JSON.parse(fs.readFileSync(STATUS_PATH, "utf-8")) as SyncStatus;
+    if (raw.inProgress && raw.startedAt) {
+      const age = Date.now() - new Date(raw.startedAt).getTime();
+      if (age > 20 * 60 * 1000) return { inProgress: false, startedAt: null, error: "Sync timed out (stale lock cleared)" };
+    }
+    return raw;
+  } catch {
+    return { inProgress: false, startedAt: null, error: null };
+  }
+}
+
+function writeStatus(status: SyncStatus) {
+  try {
+    fs.mkdirSync(path.dirname(STATUS_PATH), { recursive: true });
+    fs.writeFileSync(STATUS_PATH, JSON.stringify(status));
+  } catch {}
+}
 
 interface TagEntry {
   slug: string;
   type: string;
   taggings: Array<{ oracle_id: string }>;
 }
-
-let syncState: { inProgress: boolean; startedAt: string | null; error: string | null } = {
-  inProgress: false,
-  startedAt: null,
-  error: null,
-};
 
 function findAtRoot(prefix: string, suffix: string, dir = process.cwd()): string | null {
   if (!fs.existsSync(dir)) return null;
@@ -74,45 +96,54 @@ function parseJsonlGz(filePath: string): Promise<TagEntry[]> {
 }
 
 async function runSync() {
-  const rootJsonl = findAtRoot("oracle-tags", ".jsonl");
-  const bulkJsonl = rootJsonl ? null : findInBulk("oracle-tags");
-  const gzPath = (rootJsonl || bulkJsonl)
-    ? null
-    : (findAtRoot("oracle-tags", ".jsonl.gz") ?? findAtRoot("oracle-tags", ".jsonl.gz", path.join(process.cwd(), "data")));
+  writeStatus({ inProgress: true, startedAt: new Date().toISOString(), error: null });
+  try {
+    const rootJsonl = findAtRoot("oracle-tags", ".jsonl");
+    const bulkJsonl = rootJsonl ? null : findInBulk("oracle-tags");
+    const gzPath = (rootJsonl || bulkJsonl)
+      ? null
+      : (findAtRoot("oracle-tags", ".jsonl.gz") ?? findAtRoot("oracle-tags", ".jsonl.gz", path.join(process.cwd(), "data")));
 
-  if (!rootJsonl && !bulkJsonl && !gzPath) throw new Error("oracle-tags file not found");
+    if (!rootJsonl && !bulkJsonl && !gzPath) throw new Error("oracle-tags file not found");
 
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const Database = require("better-sqlite3") as typeof import("better-sqlite3");
-  const db = new Database(CARDS_DB_PATH);
-  db.pragma("journal_mode = WAL");
-  db.pragma("synchronous = NORMAL");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Database = require("better-sqlite3") as typeof import("better-sqlite3");
+    const db = new Database(CARDS_DB_PATH);
+    db.pragma("journal_mode = WAL");
+    db.pragma("synchronous = NORMAL");
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS oracle_tag_index (
-      slug      TEXT NOT NULL,
-      oracle_id TEXT NOT NULL,
-      PRIMARY KEY (slug, oracle_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_oti_slug ON oracle_tag_index(slug);
-  `);
-  try { db.exec("ALTER TABLE cards ADD COLUMN oracle_id TEXT"); } catch { /* already exists */ }
-  db.exec("UPDATE cards SET oracle_id = json_extract(data, '$.oracle_id') WHERE oracle_id IS NULL");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_cards_oracle_id ON cards(oracle_id)");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS oracle_tag_index (
+        slug      TEXT NOT NULL,
+        oracle_id TEXT NOT NULL,
+        PRIMARY KEY (slug, oracle_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_oti_slug ON oracle_tag_index(slug);
+    `);
+    try { db.exec("ALTER TABLE cards ADD COLUMN oracle_id TEXT"); } catch { /* already exists */ }
+    db.exec("UPDATE cards SET oracle_id = json_extract(data, '$.oracle_id') WHERE oracle_id IS NULL");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_cards_oracle_id ON cards(oracle_id)");
 
-  const jsonlFile = rootJsonl ?? bulkJsonl;
-  const tags = jsonlFile ? await parseJsonl(jsonlFile) : await parseJsonlGz(gzPath!);
+    const jsonlFile = rootJsonl ?? bulkJsonl;
+    const tags = jsonlFile ? await parseJsonl(jsonlFile) : await parseJsonlGz(gzPath!);
 
-  db.exec("DELETE FROM oracle_tag_index");
-  const insert = db.prepare("INSERT OR IGNORE INTO oracle_tag_index (slug, oracle_id) VALUES (?, ?)");
-  db.transaction((entries: TagEntry[]) => {
-    for (const tag of entries) {
-      for (const tagging of tag.taggings) {
-        if (tagging.oracle_id) insert.run(tag.slug, tagging.oracle_id);
+    db.exec("DELETE FROM oracle_tag_index");
+    const insert = db.prepare("INSERT OR IGNORE INTO oracle_tag_index (slug, oracle_id) VALUES (?, ?)");
+    db.transaction((entries: TagEntry[]) => {
+      for (const tag of entries) {
+        for (const tagging of tag.taggings) {
+          if (tagging.oracle_id) insert.run(tag.slug, tagging.oracle_id);
+        }
       }
-    }
-  })(tags);
-  db.close();
+    })(tags);
+    db.close();
+
+    writeStatus({ inProgress: false, startedAt: null, error: null });
+  } catch (err: unknown) {
+    console.error("[sync-oracle-tags] runSync failed:", err);
+    writeStatus({ inProgress: false, startedAt: null, error: String(err) });
+    throw err;
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -122,11 +153,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ synced: false, error: "cards.db not found — sync cards first" });
   }
   const stats = getOracleTagStats();
+  const syncStatus = readStatus();
   return NextResponse.json({
     synced: !!(stats && stats.assignmentCount > 0),
-    syncInProgress: syncState.inProgress,
-    syncStartedAt: syncState.startedAt,
-    lastError: syncState.error,
+    syncInProgress: syncStatus.inProgress,
+    syncStartedAt: syncStatus.startedAt,
+    lastError: syncStatus.error,
     ...(stats ?? { tagCount: 0, assignmentCount: 0 }),
   });
 }
@@ -142,15 +174,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (syncState.inProgress) {
-    return NextResponse.json({ started: false, message: "Sync already in progress", startedAt: syncState.startedAt });
+  const syncStatus = readStatus();
+  if (syncStatus.inProgress) {
+    return NextResponse.json({ started: false, message: "Sync already in progress", startedAt: syncStatus.startedAt });
   }
 
-  syncState = { inProgress: true, startedAt: new Date().toISOString(), error: null };
-
-  runSync()
-    .then(() => { syncState = { inProgress: false, startedAt: null, error: null }; })
-    .catch((err: unknown) => { syncState = { inProgress: false, startedAt: null, error: String(err) }; });
+  runSync().catch(() => { /* errors written to status file and console */ });
 
   return NextResponse.json(
     { started: true, message: "Oracle tag sync started in background. Poll GET /api/admin/sync-oracle-tags for completion." },
