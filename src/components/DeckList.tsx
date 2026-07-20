@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { ScryfallCard } from "@/types/mtg";
 import { groupCardsByType, getCardPrice, getBudgetTier, getCardTags, CardTag } from "@/lib/scryfall";
 import { isGameChanger } from "@/lib/gamechangers";
@@ -15,7 +15,6 @@ interface Props {
   commander: ScryfallCard | null;
   partner: ScryfallCard | null;
   onRemove: (card: ScryfallCard) => void;
-  onAdd?: (card: ScryfallCard) => void;
   lookingToAdd?: ScryfallCard[];
   onRemoveFromLookingToAdd?: (card: ScryfallCard) => void;
   onMoveToDeck?: (card: ScryfallCard) => void;
@@ -73,7 +72,7 @@ const TAG_STYLES: Record<CardTag["kind"], string> = {
 };
 
 export default function DeckList({
-  cards, commander, partner, onRemove, onAdd,
+  cards, commander, partner, onRemove,
   lookingToAdd = [], onRemoveFromLookingToAdd, onMoveToDeck,
   onChangePrinting, onMoveToPondering, onAddToWishlist,
   pondering = [], onRemoveFromPondering, onMovePonderingToDeck,
@@ -89,24 +88,6 @@ export default function DeckList({
   const totalCards = cards.length + (commander ? 1 : 0) + (partner ? 1 : 0);
   const deckCost = [...cards, ...(commander ? [commander] : []), ...(partner ? [partner] : [])]
     .reduce((s, c) => s + (getCardPrice(c) ?? 0), 0);
-
-  // Color identity is the union of both commanders' identities (matters for upgrade suggestions)
-  const colorIdentity = useMemo(() => {
-    const ci = new Set([
-      ...(commander?.color_identity ?? []),
-      ...(partner?.color_identity ?? []),
-    ]);
-    return [...ci];
-  }, [commander, partner]);
-
-  const deckCardNames = useMemo(
-    () => [
-      ...cards.map((c) => c.name),
-      ...(commander ? [commander.name] : []),
-      ...(partner ? [partner.name] : []),
-    ],
-    [cards, commander, partner]
-  );
 
   return (
     <div className="space-y-3">
@@ -204,9 +185,6 @@ export default function DeckList({
                       card={card}
                       count={count}
                       onRemove={onRemove}
-                      onAdd={onAdd}
-                      colorIdentity={colorIdentity}
-                      deckCardNames={deckCardNames}
                       onShowContextMenu={(c, x, y) => showContextMenu(c, x, y, true)}
                     />
                   ));
@@ -268,23 +246,16 @@ export default function DeckList({
 function CardRow({
   card,
   onRemove,
-  onAdd,
-  colorIdentity,
-  deckCardNames,
   isCommander = false,
   count = 1,
   onShowContextMenu,
 }: {
   card: ScryfallCard;
   onRemove: (c: ScryfallCard) => void;
-  onAdd?: (card: ScryfallCard) => void;
-  colorIdentity?: string[];
-  deckCardNames?: string[];
   isCommander?: boolean;
   count?: number;
   onShowContextMenu?: (card: ScryfallCard, x: number, y: number) => void;
 }) {
-  const [showUpgrade, setShowUpgrade] = useState(false);
   const [faceIdx, setFaceIdx] = useState(0);
   const price = getCardPrice(card);
   const tier = getBudgetTier(price);
@@ -292,9 +263,8 @@ function CardRow({
   const gc = isGameChanger(card.name);
   const manaCost = card.mana_cost ?? card.card_faces?.[0]?.mana_cost;
 
-  useEffect(() => { setShowUpgrade(false); setFaceIdx(0); }, [card.id]);
+  useEffect(() => { setFaceIdx(0); }, [card.id]);
 
-  const hasUpgradableTags = tags.some((t) => t.kind !== "keyword");
   const isMdfc = (card.card_faces?.length ?? 0) >= 2 && card.card_faces?.[1]?.image_uris != null;
 
   return (
@@ -319,22 +289,6 @@ function CardRow({
               </button>
             )}
             <ManaCost cost={manaCost} />
-            {!isCommander && onAdd && (
-              <button
-                onClick={(e) => { e.stopPropagation(); if (hasUpgradableTags) setShowUpgrade((v) => !v); }}
-                title={hasUpgradableTags ? "Find upgrade suggestions" : undefined}
-                style={{ fontSize: "14px", lineHeight: 1 }}
-                className={`flex-shrink-0 transition-colors ${
-                  !hasUpgradableTags
-                    ? "invisible pointer-events-none"
-                    : showUpgrade
-                      ? "text-purple-400"
-                      : "text-gray-600 hover:text-purple-400 opacity-0 group-hover:opacity-100"
-                }`}
-              >
-                ⬆
-              </button>
-            )}
             {price !== null && (
               <span className={`text-xs flex-shrink-0 ${tier === "budget" ? "text-green-400" : tier === "mid" ? "text-blue-400" : "text-orange-400"}`}>
                 ${price.toFixed(2)}
@@ -367,113 +321,7 @@ function CardRow({
         </div>
       </CardTooltip>
 
-      {showUpgrade && onAdd && (
-        <UpgradePanel
-          card={card}
-          colorIdentity={colorIdentity ?? []}
-          deckCardNames={deckCardNames ?? []}
-          onAdd={(c) => { onAdd(c); setShowUpgrade(false); }}
-          onClose={() => setShowUpgrade(false)}
-        />
-      )}
     </>
-  );
-}
-
-function UpgradePanel({
-  card,
-  colorIdentity,
-  deckCardNames,
-  onAdd,
-  onClose,
-}: {
-  card: ScryfallCard;
-  colorIdentity: string[];
-  deckCardNames: string[];
-  onAdd: (card: ScryfallCard) => void;
-  onClose: () => void;
-}) {
-  const [loading, setLoading] = useState(true);
-  const [suggestions, setSuggestions] = useState<ScryfallCard[]>([]);
-  const [sourceCmc, setSourceCmc] = useState(card.cmc);
-
-  useEffect(() => {
-    const tags = getCardTags(card).map((t) => t.kind);
-    fetch("/api/upgrade", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        cardName: card.name,
-        tags,
-        colorIdentity,
-        cmc: card.cmc,
-        typeLine: card.type_line,
-        deckCardNames,
-      }),
-    })
-      .then((r) => r.json())
-      .then((data: { suggestions: ScryfallCard[]; sourceCmc: number }) => {
-        setSuggestions(data.suggestions ?? []);
-        setSourceCmc(data.sourceCmc ?? card.cmc);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return (
-    <div className="mt-0.5 mb-1 rounded-lg border border-purple-800/40 bg-gray-950 p-2">
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[11px] font-semibold text-purple-400 uppercase tracking-wider">
-          ⬆ Upgrades for {card.name}
-        </span>
-        <button onClick={onClose} className="text-gray-600 hover:text-gray-300 text-xs leading-none">✕</button>
-      </div>
-
-      {loading ? (
-        <div className="flex items-center gap-2 py-1">
-          <span className="w-3 h-3 border-2 border-purple-500 border-t-transparent rounded-full animate-spin inline-block" />
-          <span className="text-xs text-gray-500">Searching Scryfall...</span>
-        </div>
-      ) : suggestions.length === 0 ? (
-        <p className="text-xs text-gray-500 py-1">No alternatives found in your color identity.</p>
-      ) : (
-        <div className="space-y-0.5">
-          {suggestions.map((s) => {
-            const sp = getCardPrice(s);
-            const sCost = s.mana_cost ?? s.card_faces?.[0]?.mana_cost;
-            const isCheaper = s.cmc < sourceCmc;
-            const sTier = getBudgetTier(sp);
-            return (
-              <CardTooltip key={s.id} card={s}>
-                <div className="flex items-center gap-1.5 py-0.5 px-1 rounded hover:bg-gray-800 transition-colors">
-                  {isCheaper ? (
-                    <span className="text-[9px] px-1 py-0.5 rounded bg-green-900/60 text-green-400 border border-green-800/40 leading-none flex-shrink-0">
-                      ↓ MV {s.cmc}
-                    </span>
-                  ) : (
-                    <span className="text-[9px] text-gray-600 flex-shrink-0 w-8 text-center">MV {s.cmc}</span>
-                  )}
-                  <span className="text-xs text-gray-200 flex-1 truncate">{s.name}</span>
-                  <ManaCost cost={sCost} />
-                  {sp !== null && (
-                    <span className={`text-[11px] flex-shrink-0 ${sTier === "budget" ? "text-green-400" : sTier === "mid" ? "text-blue-400" : "text-orange-400"}`}>
-                      ${sp.toFixed(2)}
-                    </span>
-                  )}
-                  <button
-                    onClick={() => onAdd(s)}
-                    className="text-[10px] px-1.5 py-0.5 rounded bg-purple-900/60 text-purple-300 hover:bg-purple-700 border border-purple-700/50 leading-none flex-shrink-0 transition-colors"
-                  >
-                    + Add
-                  </button>
-                </div>
-              </CardTooltip>
-            );
-          })}
-        </div>
-      )}
-    </div>
   );
 }
 

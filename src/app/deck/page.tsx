@@ -402,7 +402,6 @@ function DeckPageInner() {
                 commander={commander}
                 partner={partner}
                 onRemove={removeCard}
-                onAdd={addCard}
                 lookingToAdd={lookingToAdd}
                 onRemoveFromLookingToAdd={removeFromLookingToAdd}
                 onMoveToDeck={moveToDeck}
