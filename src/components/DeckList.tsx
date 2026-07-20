@@ -67,6 +67,7 @@ const TAG_STYLES: Record<CardTag["kind"], string> = {
   discard: "bg-zinc-900 text-zinc-300 border border-zinc-700/50",
   topdeck: "bg-cyan-950 text-cyan-300 border border-cyan-800/50",
   "cost-reducer": "bg-yellow-950 text-yellow-300 border border-yellow-800/50",
+  protection: "bg-purple-950 text-purple-300 border border-purple-800/50",
   // Tribe tags are intentionally dim — visible but clearly secondary to functional tags
   tribe: "text-green-500/50 border border-green-900/40",
 };

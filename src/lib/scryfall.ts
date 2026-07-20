@@ -176,7 +176,8 @@ export type CardTag =
   | { label: "Copy"; kind: "copy" }
   | { label: "Discard"; kind: "discard" }
   | { label: "Top Deck"; kind: "topdeck" }
-  | { label: "Cost Reducer"; kind: "cost-reducer" };
+  | { label: "Cost Reducer"; kind: "cost-reducer" }
+  | { label: "Protection"; kind: "protection" };
 
 export function getCardTags(card: ScryfallCard): CardTag[] {
   const tags: CardTag[] = [];
@@ -319,6 +320,15 @@ export function getCardTags(card: ScryfallCard): CardTag[] {
   // Cost Reducer: nonland cards that make spells cost less to cast
   if (!isLand && /\bcosts? .{0,40} less to cast\b/i.test(oracle)) {
     tags.push({ label: "Cost Reducer", kind: "cost-reducer" });
+  }
+
+  // Protection: cards that grant hexproof or shroud to other permanents/creatures.
+  // Excludes cards that have hexproof/shroud intrinsically (already caught as keywords).
+  // "gains? (hexproof|shroud)" always implies granting; "has|have" with those words in
+  // oracle text of equipment/auras/spells implies granting to the equipped/enchanted target.
+  const selfHasHexproofShroud = (card.keywords ?? []).some((k) => /^(hexproof|shroud)$/i.test(k));
+  if (!selfHasHexproofShroud && /(gain|gains|has|have)\b.{0,40}\b(hexproof|shroud)\b/i.test(oracle)) {
+    tags.push({ label: "Protection", kind: "protection" });
   }
 
   // Creature subtypes — always pushed last so they appear at the end of the tag row.
