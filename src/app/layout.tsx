@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "mana-font/css/mana.css";
 import { AuthProvider } from "@/components/AuthProvider";
@@ -7,6 +7,23 @@ import NavAuth from "@/components/NavAuth";
 export const metadata: Metadata = {
   title: "MTG Deck Optimizer",
   description: "Commander deck builder and optimizer powered by Scryfall + EDHREC",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "MTG Optimizer",
+  },
+  icons: {
+    icon: "/icon.svg",
+    apple: "/icon.svg",
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#030712",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

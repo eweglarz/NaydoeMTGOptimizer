@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="90" fill="#111827"/>
+  <!-- Blade -->
+  <polygon points="256,48 238,338 274,338" fill="#eab308"/>
+  <!-- Guard -->
+  <rect x="184" y="330" width="144" height="18" rx="5" fill="#ca8a04"/>
+  <!-- Grip -->
+  <rect x="246" y="348" width="20" height="90" rx="5" fill="#78350f"/>
+  <!-- Pommel -->
+  <circle cx="256" cy="452" r="17" fill="#ca8a04"/>
+</svg>

@@ -141,8 +141,8 @@ export default function DeckList({
         />
       </div>
 
-      {/* 3-column flow — groups fill each column top-to-bottom before wrapping */}
-      <div className="columns-3 gap-3">
+      {/* Column flow — 1 column on phone, 2 on tablet, 3 on desktop */}
+      <div className="columns-1 sm:columns-2 lg:columns-3 gap-3">
         {(commander || partner) && (
           <div className="card-panel border-yellow-500/30 break-inside-avoid mb-3">
             <div className="flex items-center justify-between mb-2">
@@ -284,7 +284,7 @@ function CardRow({
                 onClick={(e) => { e.stopPropagation(); setFaceIdx((i) => i === 0 ? 1 : 0); }}
                 title={`Show ${faceIdx === 0 ? "back" : "front"} face`}
                 style={{ fontSize: "14px", lineHeight: 1 }}
-                className="text-gray-500 hover:text-gray-200 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                className="text-gray-500 hover:text-gray-200 flex-shrink-0 transition-opacity md:opacity-0 md:group-hover:opacity-100"
               >
                 ↕
               </button>
@@ -295,9 +295,17 @@ function CardRow({
                 ${price.toFixed(2)}
               </span>
             )}
+            {/* ⋮ opens context menu on mobile (no right-click on touch screens) */}
+            <button
+              onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); onShowContextMenu?.(card, r.right, r.bottom); }}
+              className="md:hidden text-gray-500 hover:text-gray-200 flex-shrink-0 text-base leading-none px-0.5"
+              aria-label="Card options"
+            >
+              ⋮
+            </button>
             <button
               onClick={(e) => { e.stopPropagation(); onRemove(card); }}
-              className="text-gray-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0 text-xs"
+              className="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0 text-xs md:opacity-0 md:group-hover:opacity-100"
             >
               ✕
             </button>
@@ -357,7 +365,7 @@ function PonderingRow({
         {onMoveToDeck && (
           <button
             onClick={(e) => { e.stopPropagation(); onMoveToDeck(card); }}
-            className="text-[10px] px-1.5 py-0.5 rounded bg-green-900/60 text-green-400 hover:bg-green-700 border border-green-800/40 leading-none flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+            className="text-[10px] px-1.5 py-0.5 rounded bg-green-900/60 text-green-400 hover:bg-green-700 border border-green-800/40 leading-none flex-shrink-0 transition-opacity md:opacity-0 md:group-hover:opacity-100"
           >
             → Deck
           </button>
@@ -365,7 +373,7 @@ function PonderingRow({
         {onRemove && (
           <button
             onClick={(e) => { e.stopPropagation(); onRemove(card); }}
-            className="text-gray-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0 text-xs"
+            className="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0 text-xs md:opacity-0 md:group-hover:opacity-100"
           >
             ✕
           </button>
@@ -401,7 +409,7 @@ function LookingToAddRow({
         {onMoveToDeck && (
           <button
             onClick={(e) => { e.stopPropagation(); onMoveToDeck(card); }}
-            className="text-[10px] px-1.5 py-0.5 rounded bg-green-900/60 text-green-400 hover:bg-green-700 border border-green-800/40 leading-none flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+            className="text-[10px] px-1.5 py-0.5 rounded bg-green-900/60 text-green-400 hover:bg-green-700 border border-green-800/40 leading-none flex-shrink-0 transition-opacity md:opacity-0 md:group-hover:opacity-100"
           >
             → Deck
           </button>
@@ -409,7 +417,7 @@ function LookingToAddRow({
         {onRemove && (
           <button
             onClick={(e) => { e.stopPropagation(); onRemove(card); }}
-            className="text-gray-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0 text-xs"
+            className="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0 text-xs md:opacity-0 md:group-hover:opacity-100"
           >
             ✕
           </button>

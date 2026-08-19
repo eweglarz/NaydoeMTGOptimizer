@@ -57,6 +57,7 @@ function DeckPageInner() {
   const [optimizeLoading, setOptimizeLoading] = useState(false);
   const [tab, setTab] = useState<"deck" | "suggestions" | "buy">("deck");
   const [hasPartner, setHasPartner] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [deckName, setDeckName] = useState("Untitled Deck");
   const [savedDeckId, setSavedDeckId] = useState<string | null>(null);
@@ -257,8 +258,32 @@ function DeckPageInner() {
   const totalCards = cards.length + (commander ? 1 : 0) + (partner ? 1 : 0);
 
   return (
-    <div className="flex h-[calc(100vh-57px)]">
-      <aside className="w-72 border-r border-gray-800 bg-gray-900 flex flex-col overflow-hidden">
+    <div className="flex h-[calc(100dvh-57px)] relative overflow-hidden">
+      {/* Mobile backdrop — covers content area below header, closes sidebar when tapped */}
+      {sidebarOpen && (
+        <div
+          className="fixed top-[57px] inset-x-0 bottom-0 bg-black/60 z-40 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      <aside className={[
+        "w-72 border-r border-gray-800 bg-gray-900 flex flex-col overflow-hidden flex-shrink-0",
+        // Mobile: fixed slide-over below the header
+        "fixed top-[57px] bottom-0 left-0 z-50 transition-transform duration-300 ease-in-out",
+        // Desktop: back in the normal flex flow, no transition
+        "md:relative md:top-auto md:bottom-auto md:left-auto md:z-auto md:translate-x-0 md:transition-none",
+        sidebarOpen ? "translate-x-0" : "-translate-x-full",
+      ].join(" ")}>
+        {/* Close button — mobile only */}
+        <button
+          onClick={() => setSidebarOpen(false)}
+          className="md:hidden absolute top-2 right-2 z-10 text-gray-400 hover:text-white p-1.5 rounded-lg bg-gray-800/80 text-xs leading-none"
+          aria-label="Close sidebar"
+        >
+          ✕
+        </button>
+
         {commanderArt ? (
           <div className="relative h-32 flex-shrink-0">
             <img src={commanderArt} alt={commander?.name} className="w-full h-full object-cover" />
@@ -370,7 +395,19 @@ function DeckPageInner() {
       </aside>
 
       <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex border-b border-gray-800 bg-gray-900 px-4 flex-shrink-0">
+        <div className="flex border-b border-gray-800 bg-gray-900 px-4 flex-shrink-0 items-center">
+          {/* Hamburger — mobile only */}
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="md:hidden mr-2 text-gray-400 hover:text-white active:text-white py-3 px-1 flex-shrink-0 transition-colors"
+            aria-label="Open sidebar"
+          >
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true">
+              <rect y="2" width="18" height="2" rx="1"/>
+              <rect y="8" width="18" height="2" rx="1"/>
+              <rect y="14" width="18" height="2" rx="1"/>
+            </svg>
+          </button>
           <button
             onClick={() => setTab("deck")}
             className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${tab === "deck" ? "border-yellow-500 text-yellow-400" : "border-transparent text-gray-400 hover:text-white"}`}
