@@ -1,0 +1,184 @@
+workflows:
+
+  # ─────────────────────────────────────────────────────────────────
+  # iOS → App Store (builds on Codemagic's Mac mini M2)
+  #
+  # Required env-var groups in Codemagic → Teams → Global variables:
+  #
+  # Group: app_store_credentials
+  #   APP_STORE_CONNECT_KEY_IDENTIFIER  — Key ID from App Store Connect
+  #   APP_STORE_CONNECT_ISSUER_ID       — Issuer ID from App Store Connect
+  #   APP_STORE_CONNECT_PRIVATE_KEY     — Contents of the .p8 API key file
+  #
+  # Group: certificate_credentials
+  #   CERTIFICATE_PRIVATE_KEY           — RSA private key matching your
+  #                                       distribution certificate (or let
+  #                                       Codemagic create a new one)
+  #
+  # One-time setup:
+  #   1. Apple Developer account ($99/yr) → developer.apple.com
+  #   2. App Store Connect → Keys → create an API key (App Manager role)
+  #   3. Register Bundle ID com.naydoe.mtgoptimizer in Identifiers
+  #   4. Create an App record in App Store Connect
+  # ─────────────────────────────────────────────────────────────────
+  ios-app-store:
+    name: iOS — App Store
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+
+    environment:
+      groups:
+        - app_store_credentials
+        - certificate_credentials
+      vars:
+        BUNDLE_ID: "com.naydoe.mtgoptimizer"
+        XCODE_WORKSPACE: "ios/App/App.xcworkspace"
+        XCODE_SCHEME: "App"
+      node: "20"
+      xcode: latest
+      cocoapods: default
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+          head_branch: true
+
+    scripts:
+      - name: Install npm dependencies
+        script: npm ci
+
+      - name: Scaffold iOS Capacitor platform
+        script: |
+          # ios/ is not checked in (generated on macOS only);
+          # Codemagic creates it fresh each build.
+          npx cap add ios
+
+      - name: Sync Capacitor plugins & config
+        script: npx cap sync ios
+
+      - name: Generate app icons for iOS
+        script: |
+          npx @capacitor/assets generate --ios --assetPath public \
+            --iconBackgroundColor '#111827' || true
+
+      - name: Set up keychain
+        script: keychain initialize
+
+      - name: Fetch signing certificate & provisioning profile
+        script: |
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+
+      - name: Add certificates to keychain
+        script: keychain add-certificates
+
+      - name: Apply provisioning profiles to Xcode project
+        script: xcode-project use-profiles
+
+      - name: Build IPA
+        script: |
+          xcode-project build-ipa \
+            --workspace "$XCODE_WORKSPACE" \
+            --scheme "$XCODE_SCHEME"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        # Uploads to TestFlight first — flip submit_to_app_store: true
+        # when you're ready for the full review submission.
+        submit_to_testflight: true
+        submit_to_app_store: false
+      email:
+        recipients:
+          - elias666wegs@gmail.com
+        notify:
+          success: true
+          failure: true
+
+
+  # ─────────────────────────────────────────────────────────────────
+  # Android → Google Play (builds on Codemagic Linux instance)
+  #
+  # Required env-var groups:
+  #
+  # Group: google_play_credentials
+  #   GCLOUD_SERVICE_ACCOUNT_CREDENTIALS — JSON service account key
+  #                                        (Google Play → Setup → API access)
+  #
+  # Group: android_signing
+  #   CM_KEYSTORE            — base64-encoded .jks or .keystore file
+  #   CM_KEYSTORE_PASSWORD   — keystore password
+  #   CM_KEY_ALIAS           — key alias
+  #   CM_KEY_PASSWORD        — key password
+  #
+  # One-time setup:
+  #   1. Google Play Console ($25 one-time) → create app → Internal testing
+  #   2. Setup → API access → link a Google Cloud project → create service account
+  #   3. Generate a signing keystore: keytool -genkey -v -keystore mtg.jks ...
+  # ─────────────────────────────────────────────────────────────────
+  android-google-play:
+    name: Android — Google Play
+    instance_type: linux_x2
+    max_build_duration: 60
+
+    environment:
+      groups:
+        - google_play_credentials
+        - android_signing
+      vars:
+        PACKAGE_NAME: "com.naydoe.mtgoptimizer"
+      node: "20"
+      java: "17"
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+          head_branch: true
+
+    scripts:
+      - name: Install npm dependencies
+        script: npm ci
+
+      - name: Sync Capacitor plugins & config to Android
+        script: npx cap sync android
+
+      - name: Set up Android keystore
+        script: |
+          echo "$CM_KEYSTORE" | base64 --decode > "$CM_BUILD_DIR/keystore.jks"
+
+      - name: Build release AAB
+        script: |
+          cd android
+          ./gradlew bundleRelease \
+            -Pandroid.injected.signing.store.file="$CM_BUILD_DIR/keystore.jks" \
+            -Pandroid.injected.signing.store.password="$CM_KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$CM_KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$CM_KEY_PASSWORD"
+
+    artifacts:
+      - android/app/build/outputs/**/*.aab
+      - android/app/build/outputs/**/mapping.txt
+
+    publishing:
+      google_play:
+        credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
+        track: internal
+        submit_as_draft: true
+      email:
+        recipients:
+          - elias666wegs@gmail.com
+        notify:
+          success: true
+          failure: true
