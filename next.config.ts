@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["better-sqlite3"],
+  serverExternalPackages: ["better-sqlite3", "tesseract.js"],
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "cards.scryfall.io" },

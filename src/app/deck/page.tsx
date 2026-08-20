@@ -10,6 +10,7 @@ import BuyListPanel from "@/components/BuyListPanel";
 import DeckImport from "@/components/DeckImport";
 import CommanderSearch from "@/components/CommanderSearch";
 import AuthModal from "@/components/AuthModal";
+import CardScanner from "@/components/CardScanner";
 import { useAuth } from "@/components/AuthProvider";
 import { getCardImage } from "@/lib/scryfall";
 
@@ -58,6 +59,7 @@ function DeckPageInner() {
   const [tab, setTab] = useState<"deck" | "suggestions" | "buy">("deck");
   const [hasPartner, setHasPartner] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
 
   const [deckName, setDeckName] = useState("Untitled Deck");
   const [savedDeckId, setSavedDeckId] = useState<string | null>(null);
@@ -408,6 +410,21 @@ function DeckPageInner() {
               <rect y="14" width="18" height="2" rx="1"/>
             </svg>
           </button>
+          {/* Scan card button — mobile always visible, desktop hover */}
+          <button
+            onClick={() => setScannerOpen(true)}
+            className="mr-2 text-gray-400 hover:text-yellow-400 active:text-yellow-400 py-3 px-1 flex-shrink-0 transition-colors"
+            aria-label="Scan a card"
+            title="Scan card with camera"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <rect x="3" y="3" width="7" height="7" rx="1" />
+              <rect x="14" y="3" width="7" height="7" rx="1" />
+              <rect x="3" y="14" width="7" height="7" rx="1" />
+              <circle cx="17.5" cy="17.5" r="3.5" />
+              <path d="M21 21l-1.5-1.5" />
+            </svg>
+          </button>
           <button
             onClick={() => setTab("deck")}
             className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${tab === "deck" ? "border-yellow-500 text-yellow-400" : "border-transparent text-gray-400 hover:text-white"}`}
@@ -499,6 +516,12 @@ function DeckPageInner() {
         </div>
       </div>
 
+      {scannerOpen && (
+        <CardScanner
+          onAddCard={(card) => { addCard(card); }}
+          onClose={() => setScannerOpen(false)}
+        />
+      )}
       {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
     </div>
   );

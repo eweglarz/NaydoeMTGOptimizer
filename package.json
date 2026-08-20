@@ -26,7 +26,8 @@
     "mana-font": "^1.18.0",
     "next": "^16.2.9",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "tesseract.js": "^7.0.0"
   },
   "engines": {
     "node": ">=20"
