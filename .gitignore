@@ -39,6 +39,15 @@ data/app.db-wal
 # Scryfall bulk data dumps (too large for git — run sync endpoints to rebuild)
 ScryfallBulk/
 
+# Capacitor / Android build artifacts (native project IS committed)
+android/.gradle/
+android/app/build/
+android/build/
+.gradle/
+# iOS Pods (ios/ native project IS committed; pods are restored via pod install)
+ios/Pods/
+ios/.DS_Store
+
 # OS
 .DS_Store
 Thumbs.db
