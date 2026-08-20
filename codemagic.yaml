@@ -44,7 +44,6 @@ workflows:
       branch_patterns:
         - pattern: main
           include: true
-          head_branch: true
 
     scripts:
       - name: Install npm dependencies
@@ -92,7 +91,9 @@ workflows:
 
     publishing:
       app_store_connect:
-        auth: integration
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
         # Uploads to TestFlight first — flip submit_to_app_store: true
         # when you're ready for the full review submission.
         submit_to_testflight: true
@@ -145,7 +146,6 @@ workflows:
       branch_patterns:
         - pattern: main
           include: true
-          head_branch: true
 
     scripts:
       - name: Install npm dependencies
