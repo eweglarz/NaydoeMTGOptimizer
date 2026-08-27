@@ -1,6 +1,6 @@
 # NaydoeMTG Optimizer
 
-A Commander/EDH deck optimization tool built with Next.js. Search for commanders, import your deck list, analyze card synergies using EDHREC data and Scryfall Tagger oracle tags, and get actionable suggestions to tune your 99.
+A Commander/EDH deck optimization tool built with Next.js — works as a web app, PWA (Add to Home Screen on iOS/Android), and ships as a native app via Capacitor. Search for commanders, import your deck list, scan physical cards with your camera, analyze synergies using EDHREC + Scryfall Tagger oracle tags, and get actionable suggestions to tune your 99.
 
 ---
 
@@ -164,6 +164,30 @@ Tagger suggestions are sorted by this score. Cards already shown as EDHREC sugge
 
 ---
 
+### Camera Card Scanner
+
+Tap the **scan icon** in the deck tab bar to open the camera scanner:
+
+- Opens the rear camera with a card-shaped alignment guide and an amber strip highlighting the name area
+- Captures just the card name strip, applies grayscale + contrast enhancement, and sends to Tesseract.js OCR on the server
+- Fuzzy-matches the OCR result against Scryfall — handles minor errors ("Lightnng Bolt" → "Lightning Bolt")
+- If no exact match, shows up to 5 autocomplete candidates to tap from
+- Confirming adds the card directly to your main deck list
+- Works in mobile Safari (PWA) and in the native Capacitor app
+
+---
+
+### Mobile / PWA
+
+The app is fully mobile-responsive and installable as a PWA:
+
+- **Sidebar drawer** — slides in from the left on mobile via the ☰ hamburger; desktop keeps the sidebar fixed
+- **Touch-friendly** — action buttons always visible on mobile; ⋮ context menu replaces right-click for card options
+- **Responsive grid** — 1 column on phone · 2 on tablet · 3 on desktop
+- **Add to Home Screen** — open in Safari → Share → Add to Home Screen for a standalone app with icon and splash
+
+---
+
 ### Buy List
 
 The **Buy Cards** tab generates a consolidated buy list of all cards in your deck that you don't yet own, with TCGPlayer links.
@@ -181,8 +205,12 @@ The **Buy Cards** tab generates a consolidated buy list of all cards in your dec
 | Synergy Data | EDHREC (unofficial JSON API) |
 | Oracle Tags | Scryfall Tagger (GraphQL) + local oracle_tag_index |
 | Local DB | SQLite via `better-sqlite3` |
+| OCR | Tesseract.js (server-side, card name strip) |
 | Deck Import | Text export parsing (Moxfield, MTGO, Arena, plain text) |
 | Hosting | Railway (persistent volume for SQLite DB) |
+| Mobile / PWA | Web manifest + viewport meta + safe-area insets |
+| Native App | Capacitor 8 (Android project checked in; iOS via Codemagic CI) |
+| CI/CD | Codemagic — iOS App Store + Android Google Play workflows |
 
 ---
 
@@ -192,15 +220,16 @@ The **Buy Cards** tab generates a consolidated buy list of all cards in your dec
 src/
 ├── app/
 │   ├── page.tsx                      # Home — commander search entry point
-│   ├── layout.tsx                    # Root layout
-│   ├── globals.css                   # Global styles + Tailwind directives
+│   ├── layout.tsx                    # Root layout + PWA metadata/viewport
+│   ├── globals.css                   # Global styles + safe-area-inset padding
 │   └── deck/
-│       └── page.tsx                  # Deck builder (3-panel layout, all state)
+│       └── page.tsx                  # Deck builder (sidebar drawer, scanner, all state)
 │   └── api/
 │       ├── moxfield/route.ts         # POST: parse text/URL → Scryfall bulk lookup
 │       ├── optimize/route.ts         # POST: run optimizer → suggestions + score
 │       ├── upgrade/route.ts          # POST: per-card upgrade search via Scryfall
 │       ├── edhrec/route.ts           # GET: EDHREC commander data
+│       ├── scan-card/route.ts        # POST: Tesseract OCR + Scryfall fuzzy lookup
 │       ├── admin/
 │       │   ├── sync-cards/route.ts   # POST: download Scryfall oracle-cards → cards.db
 │       │   └── sync-oracle-tags/     # POST: import oracle-tags.jsonl → oracle_tag_index
@@ -210,6 +239,7 @@ src/
 ├── components/
 │   ├── BuyListPanel.tsx              # Buy list with TCGPlayer links
 │   ├── CardImage.tsx                 # Next/Image wrapper for Scryfall images
+│   ├── CardScanner.tsx               # Camera scanner modal (OCR → Scryfall confirm)
 │   ├── CardSearch.tsx                # Card search autocomplete + add to deck
 │   ├── CardTooltip.tsx               # Hover tooltip: card image + oracle text
 │   ├── CommanderSearch.tsx           # Commander-specific autocomplete search
@@ -257,6 +287,13 @@ src/
 │                                     #   EdhrecCard, EdhrecRecommendation, etc.
 scripts/
 └── startup.mjs                       # Railway bootstrap: cards.db + oracle_tag_index
+android/                              # Capacitor Android native project (committed)
+www/                                  # Capacitor webDir placeholder (loads from server.url)
+public/
+├── manifest.json                     # PWA web app manifest
+├── icon.svg                          # App icon (sword design, dark background)
+capacitor.config.ts                   # Capacitor config — remote URL mode → Railway
+codemagic.yaml                        # CI/CD: ios-app-store + android-google-play workflows
 oracle-tags.jsonl                     # Scryfall oracle tag assignments (~17 MB)
 railway.toml                          # Railway deployment config
 ```
@@ -340,6 +377,38 @@ npm start
 - Direct URL import blocked (403 for unauthenticated requests)
 - Use Moxfield's **Export → Text** and paste via the Paste List tab
 - All standard Moxfield text export formats are supported including `(SET) ###` collector info suffixes, which are stripped during parse
+
+---
+
+## Native App (Capacitor + Codemagic)
+
+The app wraps the Railway-hosted web app in a native shell using Capacitor's **remote URL** mode — no static export required.
+
+### Android
+
+The `android/` native project is checked in. To build locally:
+
+1. Install [Android Studio](https://developer.android.com/studio)
+2. `npm run cap:sync` — syncs plugins and config
+3. `npm run cap:android` — opens Android Studio
+4. Build → Generate Signed Bundle/APK
+
+### iOS (via Codemagic — no Mac required)
+
+`ios/` is not checked in (CocoaPods requires macOS). Codemagic scaffolds it on each build:
+
+1. Connect the repo at [codemagic.io](https://codemagic.io)
+2. Set up env-var groups in Codemagic → Teams → Global variables:
+   - `app_store_credentials`: `APP_STORE_CONNECT_PRIVATE_KEY`, `APP_STORE_CONNECT_KEY_IDENTIFIER`, `APP_STORE_CONNECT_ISSUER_ID`
+   - `certificate_credentials`: `CERTIFICATE_PRIVATE_KEY`
+   - `google_play_credentials`: `GCLOUD_SERVICE_ACCOUNT_CREDENTIALS`
+   - `android_signing`: `CM_KEYSTORE`, `CM_KEYSTORE_PASSWORD`, `CM_KEY_ALIAS`, `CM_KEY_PASSWORD`
+3. Push to `main` — both `ios-app-store` and `android-google-play` workflows trigger automatically
+4. iOS builds upload to TestFlight; Android builds submit to Play internal track as draft
+
+### PWA (no account required)
+
+Open the Railway URL in **Safari on iPhone** → Share → **Add to Home Screen** for a standalone app experience identical to the Capacitor build.
 
 ---
 
